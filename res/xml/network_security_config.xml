@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- chỉ cho phép http thường với nguồn giá vàng dự phòng BTMC (không có https); mọi nơi khác vẫn bắt buộc https -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">api.btmc.vn</domain>
+    </domain-config>
+</network-security-config>

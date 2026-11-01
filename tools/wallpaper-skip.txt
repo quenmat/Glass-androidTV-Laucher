@@ -1,0 +1,7 @@
+# Ảnh trong thư mục ảnh nền nhưng KHÔNG đưa lên TV (mỗi dòng một tên file, có hoặc không có đuôi).
+# File gốc trên máy tính vẫn giữ nguyên; chạy lại tools/sync_wallpapers.py để áp dụng.
+alien-earth-crate-3840x2160-22289
+wonder-woman-batman-3840x2160-21668
+lamine-yamal-fifa-3840x2160-27561
+# màn hình chờ (D:\lock screen)
+earth-space-black-background-atmosphere-blue-planet-5k-8k-3840x2160-2152
