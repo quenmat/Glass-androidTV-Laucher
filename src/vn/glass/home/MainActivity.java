@@ -1758,6 +1758,54 @@ public class MainActivity extends Activity {
             a = 0.33f + 0.67f * Math.max(0f, Math.min(1f, (lum - 0.2f) / 0.45f));
         }
         saverHalo.animate().alpha(a).setDuration(600).start();
+        if (d instanceof android.graphics.drawable.BitmapDrawable) glassFrom(((android.graphics.drawable.BitmapDrawable) d).getBitmap());
+    }
+
+    // ---------- chữ kính mờ của màn hình chờ ----------
+    // Lòng chữ là chính ảnh nền làm nhoè, sáng lên và pha trắng sữa: thấy màu ảnh xuyên qua, hơi trong. Kính phẳng:
+    // không viền sáng, không bóng lệch; chỉ quầng tối rất mềm đều quanh chữ. Ảnh nhoè chỉ dựng lại khi đổi ảnh,
+    // vị trí chỉ tính lại khi cụm chữ dời chỗ (3 phút một lần), không vẽ lại từng khung hình.
+
+    private Bitmap glassSrc;
+
+    /** Ảnh nhoè đã pha màu kính: tối như nền màn hình chờ, sáng lên ~1,9 lần rồi phủ ~33% trắng ngà. */
+    private void glassFrom(Bitmap bg) {
+        if (bg == null) return;
+        Bitmap b = FrostView.blur(bg);
+        Bitmap t = Bitmap.createBitmap(b.getWidth(), b.getHeight(), Bitmap.Config.ARGB_8888);
+        float k = 0.456f;   // 0,55 (lớp tối) x 0,65 (đáy tối dần) x 1,9 (làm sáng) x 0,67 (phần còn lại sau lớp trắng)
+        android.graphics.ColorMatrix cm = new android.graphics.ColorMatrix(new float[]{
+                k, 0, 0, 0, 107,
+                0, k, 0, 0, 105,
+                0, 0, k, 0, 103,
+                0, 0, 0, 1, 0});
+        Paint p = new Paint(Paint.FILTER_BITMAP_FLAG);
+        p.setColorFilter(new android.graphics.ColorMatrixColorFilter(cm));
+        new Canvas(t).drawBitmap(b, 0, 0, p);
+        glassSrc = t;
+        if (saverText != null) saverText.post(this::placeGlass);
+    }
+
+    /** Gắn ảnh kính vào nét chữ, khớp đúng chỗ ảnh nền phía sau (ảnh nền phóng 108%, cắt giữa như ImageView). */
+    private void placeGlass() {
+        if (!saverOn || glassSrc == null || saverBg == null) return;
+        int sw = getResources().getDisplayMetrics().widthPixels, sh = getResources().getDisplayMetrics().heightPixels;
+        float k = Math.max(sw / (float) glassSrc.getWidth(), sh / (float) glassSrc.getHeight()) * saverBg.getScaleX();
+        float ox = (sw - glassSrc.getWidth() * k) / 2f + saverBg.getTranslationX(), oy = (sh - glassSrc.getHeight() * k) / 2f;
+        int[] at = new int[2];
+        for (TextView tv : new TextView[]{saverTime, saverSolar, saverLunar}) {
+            if (tv == null) continue;
+            tv.getLocationOnScreen(at);
+            android.graphics.Matrix m = new android.graphics.Matrix();
+            m.setScale(k, k);
+            m.postTranslate(ox - at[0] - tv.getTotalPaddingLeft(), oy - at[1] - tv.getExtendedPaddingTop());
+            android.graphics.BitmapShader shader = new android.graphics.BitmapShader(glassSrc,
+                    android.graphics.Shader.TileMode.CLAMP, android.graphics.Shader.TileMode.CLAMP);
+            shader.setLocalMatrix(m);
+            tv.getPaint().setFilterBitmap(true);
+            tv.getPaint().setShader(shader);
+            tv.invalidate();
+        }
     }
     private boolean saverOn, swallowUp;
 
@@ -1768,7 +1816,8 @@ public class MainActivity extends Activity {
             // dịch cụm chữ tới một chỗ ngẫu nhiên gần đó (vẫn ở góc dưới trái), thật chậm
             java.util.Random r = new java.util.Random();
             float dx = px(-40 + r.nextInt(81)), dy = px(-40 + r.nextInt(41));
-            saverText.animate().translationX(dx).translationY(dy).setDuration(4000).setInterpolator(EASE).start();
+            saverText.animate().translationX(dx).translationY(dy).setDuration(4000).setInterpolator(EASE)
+                    .withEndAction(MainActivity.this::placeGlass).start();   // dời xong: kính khớp lại với nền
             saverHalo.animate().translationX(dx).translationY(dy).setDuration(4000).setInterpolator(EASE).start();
             // thông báo dịch cùng độ cao với cụm bên trái: chân chữ luôn thẳng hàng với dòng âm lịch
             saverTet.animate().translationX(-Math.abs(dx) / 3).translationY(noticeShift + dy).setDuration(4000).setInterpolator(EASE).start();
@@ -1830,23 +1879,22 @@ public class MainActivity extends Activity {
         // nét 320 (thanh nhưng không như sợi tóc): giao diện vẽ ở 1080p rồi TV phóng lên 4K, nét quá mảnh sẽ răng cưa
         // nhỏ và dịu: kem ấm (không trắng lạnh) ~60% (giờ) > ~55% (lịch dương) > ~44% (âm lịch);
         // trên nền tối, trắng lạnh và độ sáng cao trông gắt
-        saverTime = text(320, 140, 0x99F2E8D8);
+        // chữ kính: màu lấy từ ảnh nền (placeGlass), ở đây chỉ còn độ trong; giờ nét 460 để lòng kính đủ rộng mà thấy
+        saverTime = text(460, 140, 0xD7FFFFFF);
         saverTime.setLetterSpacing(0f);   // không giãn chữ âm: bề rộng đo được khớp nét vẽ, chữ số cuối không bị xén
         saverTime.setFontFeatureSettings("tnum");
         saverTime.setSingleLine(true);
         saverTime.setEllipsize(null);
         saverTime.setPadding(0, px(8), px(24), px(8));
-        saverSolar = text(500, 36, 0x8CF2E8D8);
-        saverLunar = text(400, 30, 0x70F2E8D8);
+        saverSolar = text(500, 36, 0xD2FFFFFF);
+        saverLunar = text(400, 30, 0xB4FFFFFF);
         // ô thông báo góc dưới phải (đếm ngược Tết / giá coin, xoay vòng): chữ nhỏ, màu từng phần do span quyết định
         saverTet = text(500, 26, 0xD1FAF6EE);
         saverTet.setFontFeatureSettings("tnum");
         saverTet.setLetterSpacing(0.02f);
-        for (TextView t : new TextView[]{saverTime, saverSolar, saverLunar, saverTet}) {
-            t.setShadowLayer(px(14), 0, px(2), 0x52000000);   // bóng mỏng nhoè rộng: tách chữ khỏi ảnh, không thành viền
-        }
-        // giờ cỡ to: không bóng (viền tối của bóng làm mép chữ sắc gắt); quầng tối mềm phía sau đã đủ tách nền
-        saverTime.setShadowLayer(0, 0, 0, 0);
+        saverTet.setShadowLayer(px(14), 0, px(2), 0x52000000);   // bóng mỏng nhoè rộng: tách chữ khỏi ảnh, không thành viền
+        // chữ kính: quầng tối rất mềm, đều quanh chữ (không lệch xuống, không thành viền nổi khối)
+        for (TextView t : new TextView[]{saverTime, saverSolar, saverLunar}) t.setShadowLayer(px(14), 0, 0, 0x2E000000);
         // bề rộng cố định theo chuỗi rộng nhất (+15% dư): khung tự đo của TextView hụt với Inter có độ đậm tuỳ biến
         // ở cỡ lớn, làm chữ số cuối bị xén một nửa
         int timeW = (int) Math.ceil(saverTime.getPaint().measureText("00:00") * 1.15f) + saverTime.getPaddingRight();
@@ -1877,6 +1925,7 @@ public class MainActivity extends Activity {
         noticeShift = 0;
         showNotice(false);
         saver.post(this::alignNotice);
+        saver.post(this::placeGlass);   // bố cục xong mới biết chữ nằm đâu để khớp kính với nền
         ui.removeCallbacks(noticeTick);
         ui.postDelayed(noticeTick, NOTICE_MS);
         getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
