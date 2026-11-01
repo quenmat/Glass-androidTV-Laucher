@@ -1887,7 +1887,10 @@ public class MainActivity extends Activity {
         saverTime.setEllipsize(null);
         saverTime.setPadding(0, px(8), px(24), px(8));
         saverSolar = text(500, 36, 0xD2FFFFFF);
-        saverLunar = text(400, 30, 0xB4FFFFFF);
+        // âm lịch cùng kiểu chữ với dòng thông báo góc phải (đếm ngược Tết / giá coin) và cùng đường chân chữ
+        saverLunar = text(500, 26, 0xB4FFFFFF);
+        saverLunar.setLetterSpacing(0.02f);
+        saverLunar.setFontFeatureSettings("tnum");
         // ô thông báo góc dưới phải (đếm ngược Tết / giá coin, xoay vòng): chữ nhỏ, màu từng phần do span quyết định
         saverTet = text(500, 26, 0xD1FAF6EE);
         saverTet.setFontFeatureSettings("tnum");
