@@ -39,6 +39,9 @@ final class Apps {
     private static final java.util.Map<String, String> CARD_FOR = new java.util.HashMap<>();
     static {
         CARD_FOR.put("com.iqiyi.i18n.tv", "iqiyi");
+        CARD_FOR.put("com.vieon.tv", "vieon");
+        CARD_FOR.put("com.wbd.stream", "hbo");     // HBO Max bản hiện tại
+        CARD_FOR.put("com.hbo.hbonow", "hbo");     // HBO Max bản cũ
     }
 
     /**
