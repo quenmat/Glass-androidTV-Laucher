@@ -28,6 +28,8 @@ Launcher Android TV kiểu Apple TV: kính mờ, chuyển động mượt, chữ
 
 ## Tải về
 
+Hướng dẫn cài từng bước cho người không rành kỹ thuật: [docs/huong-dan-cai-dat.pdf](docs/huong-dan-cai-dat.pdf).
+
 Bản cài sẵn nằm trong thư mục [`release/`](release):
 - [`glass-home.apk`](release/glass-home.apk): launcher Glass Home.
 - [`doi-anh-nen.apk`](release/doi-anh-nen.apk): app phụ "Đổi ảnh nền" (tuỳ chọn, để gán nút APPS bằng Button Mapper).
