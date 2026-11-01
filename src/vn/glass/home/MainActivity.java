@@ -173,6 +173,8 @@ public class MainActivity extends Activity {
         ui.removeCallbacks(eplCycle); ui.postDelayed(eplCycle, EPL_FIXTURES_MS);
         ui.removeCallbacks(bgRotate); ui.postDelayed(bgRotate, bgRotateMs());
         armSaver();   // đứng yên ở màn hình chính 5 phút thì hiện màn hình chờ
+        ui.removeCallbacks(showHomePrompt);
+        if (needsHomePrompt()) ui.postDelayed(showHomePrompt, 1200);
     }
 
     @Override
@@ -190,6 +192,11 @@ public class MainActivity extends Activity {
         ui.removeCallbacks(showSaverLater);
         hideSaver(false);
         if (settings != null) settings.close(false);   // rời màn hình chính: đóng bảng, tắt máy chủ nhận ảnh
+        ui.removeCallbacks(showHomePrompt);
+        if (homePrompt != null) { root.removeView(homePrompt); homePrompt = null;
+            tray.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+            shelfRow.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+            gear.setFocusable(true); }
     }
 
     @Override
@@ -1479,6 +1486,119 @@ public class MainActivity extends Activity {
         launchPkg(it.pkg, src);
     }
 
+    // ---------- nhắc đặt Glass Home làm màn hình chính ----------
+    // Google TV không có chỗ chọn launcher. Máy chưa đặt bằng máy tính (adb) thì nhắc bật dịch vụ HomeGuard trong
+    // Hỗ trợ tiếp cận: bật tivi và bấm Home sẽ vào Glass Home. "Để sau" thì thôi nhắc tới lần khởi động lại app.
+
+    private FrameLayout homePrompt;
+    private static boolean homePromptLater;
+    private final Runnable showHomePrompt = this::showHomePrompt;
+
+    private boolean needsHomePrompt() {
+        return !homePromptLater && homePrompt == null && settings == null && allApps == null
+                && !HomeGuard.isSystemHome(this) && !HomeGuard.enabled(this);
+    }
+
+    private void showHomePrompt() {
+        if (!needsHomePrompt() || saverOn || !shown()) return;
+        int sw = getResources().getDisplayMetrics().widthPixels, sh = getResources().getDisplayMetrics().heightPixels;
+        FrameLayout box = new FrameLayout(this);
+        View shade = new View(this);
+        shade.setBackgroundColor(0xA6000000);
+        box.addView(shade, new FrameLayout.LayoutParams(-1, -1));
+        int cw = 920, ch = 470, cx = (1920 - cw) / 2, cy = (1080 - ch) / 2;
+        FrameLayout card = new FrameLayout(this);
+        FrostView glass = new FrostView(this, px(36), sw, sh, px(cx), px(cy), Math.max(1, px(1))).deep();
+        if (lastBlur != null) glass.setImage(lastBlur);
+        card.addView(glass, new FrameLayout.LayoutParams(-1, -1));
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(px(64), px(56), px(64), px(48));
+        TextView t = text(600, 38, 0xF0F2EEE6);
+        t.setText("Đặt Glass Home làm màn hình chính");
+        col.addView(t);
+        TextView b = text(400, 24, 0xB3F2EEE6);
+        b.setText("Bật một lần trong Cài đặt → Hỗ trợ tiếp cận → Glass Home: màn hình chính. "
+                + "Từ đó bật tivi hay bấm nút Home đều vào thẳng Glass Home.");
+        b.setLineSpacing(px(8), 1f);
+        LinearLayout.LayoutParams lb = new LinearLayout.LayoutParams(-1, -2);
+        lb.topMargin = px(22);
+        col.addView(b, lb);
+        TextView n = text(400, 20, 0x80F2EEE6);
+        n.setText("Android sẽ cảnh báo dịch vụ có thể theo dõi thao tác. Glass Home chỉ nghe nút Home và biết màn hình gốc có đang hiện không.");
+        n.setLineSpacing(px(6), 1f);
+        LinearLayout.LayoutParams ln = new LinearLayout.LayoutParams(-1, -2);
+        ln.topMargin = px(18);
+        col.addView(n, ln);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        TextView open = promptButton("Mở cài đặt", v -> {
+            closeHomePrompt(false);
+            try { startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)); } catch (Exception ignored) {}
+        });
+        TextView later = promptButton("Để sau", v -> closeHomePrompt(true));
+        LinearLayout.LayoutParams lo = new LinearLayout.LayoutParams(px(300), px(64));
+        row.addView(open, lo);
+        LinearLayout.LayoutParams ll = new LinearLayout.LayoutParams(px(220), px(64));
+        ll.leftMargin = px(20);
+        row.addView(later, ll);
+        LinearLayout.LayoutParams lr = new LinearLayout.LayoutParams(-2, -2);
+        lr.topMargin = px(34);
+        col.addView(row, lr);
+        card.addView(col, new FrameLayout.LayoutParams(-1, -1));
+        FrameLayout.LayoutParams lc = new FrameLayout.LayoutParams(px(cw), px(ch), Gravity.TOP | Gravity.START);
+        lc.leftMargin = px(cx); lc.topMargin = px(cy);
+        box.addView(card, lc);
+
+        tray.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+        shelfRow.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+        gear.setFocusable(false);
+        dimGlow(true);
+        box.setAlpha(0f);
+        card.setScaleX(0.96f); card.setScaleY(0.96f);
+        root.addView(box, new FrameLayout.LayoutParams(-1, -1));
+        homePrompt = box;
+        box.animate().alpha(1f).setDuration(280).setInterpolator(EASE).start();
+        card.animate().scaleX(1f).scaleY(1f).setDuration(340).setInterpolator(EASE).withLayer().start();
+        open.requestFocus();
+    }
+
+    /** Nút trong hộp nhắc: nền kính mờ, được chọn thì nền trắng chữ tối như nút Apple TV. */
+    private TextView promptButton(String s, View.OnClickListener click) {
+        TextView b = text(500, 24, 0xE6F2EEE6);
+        b.setText(s);
+        b.setGravity(Gravity.CENTER);
+        b.setFocusable(true);
+        b.setClickable(true);
+        b.setOnClickListener(click);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(px(16));
+        bg.setColor(0x1FFFFFFF);
+        b.setBackground(bg);
+        b.setOnFocusChangeListener((v, has) -> {
+            ValueAnimator a = ValueAnimator.ofArgb(has ? 0x1FFFFFFF : 0xEBF2EEE6, has ? 0xEBF2EEE6 : 0x1FFFFFFF);
+            a.setDuration(220);
+            a.setInterpolator(EASE);
+            a.addUpdateListener(an -> bg.setColor((int) an.getAnimatedValue()));
+            a.start();
+            b.setTextColor(has ? 0xFF1C1C1E : 0xE6F2EEE6);
+            b.animate().scaleX(has ? 1.04f : 1f).scaleY(has ? 1.04f : 1f).setDuration(220).setInterpolator(EASE).start();
+        });
+        return b;
+    }
+
+    private void closeHomePrompt(boolean later) {
+        if (homePrompt == null) return;
+        if (later) homePromptLater = true;
+        View v = homePrompt;
+        homePrompt = null;
+        v.animate().alpha(0f).setDuration(220).setInterpolator(EASE).withEndAction(() -> root.removeView(v)).start();
+        tray.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+        shelfRow.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+        gear.setFocusable(true);
+        cards.get(focused).requestFocus();
+    }
+
     // ---------- bảng Cài đặt ----------
 
     private SettingsPanel settings;
@@ -2074,6 +2194,15 @@ public class MainActivity extends Activity {
             return true;
         }
         armSaver();
+        if (homePrompt != null) {
+            // hộp nhắc đặt làm màn hình chính: Quay lại = Để sau; phím hướng chuyển giữa hai nút
+            int kc = e.getKeyCode();
+            if (kc == KeyEvent.KEYCODE_BACK || kc == KeyEvent.KEYCODE_ESCAPE) {
+                if (e.getAction() == KeyEvent.ACTION_DOWN) closeHomePrompt(true);
+                return true;
+            }
+            return super.dispatchKeyEvent(e);
+        }
         if (settings != null) {
             // bảng Cài đặt: Quay lại đi lùi từng bước; các phím hướng để hệ thống tự chuyển trong bảng
             int kc = e.getKeyCode();

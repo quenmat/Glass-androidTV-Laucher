@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="home_guard_label">Glass Home: màn hình chính</string>
+    <string name="home_guard_summary">Bật tivi và bấm Home là vào Glass Home</string>
+    <string name="home_guard_desc">Glass Home dùng dịch vụ này để làm màn hình chính: khi bật tivi hoặc bấm nút Home trên điều khiển, Glass Home sẽ hiện ra thay cho màn hình gốc. Dịch vụ chỉ nghe nút Home và biết màn hình gốc có đang hiện hay không, không đọc nội dung hay thao tác nào khác.</string>
+</resources>
