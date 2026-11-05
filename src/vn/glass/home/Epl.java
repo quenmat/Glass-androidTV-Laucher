@@ -30,7 +30,7 @@ final class Epl {
         int minutes;
     }
 
-    static final class Team { String name; int code; Bitmap badge, small; }
+    static final class Team { String name, abbr; int code; Bitmap badge, small; }
 
     /** Một dòng bảng xếp hạng: tính từ các trận đã đá xong của cả mùa. */
     static final class Standing {
@@ -44,6 +44,7 @@ final class Epl {
         List<Match> matches = new ArrayList<>();
         Map<Integer, Team> teams = new HashMap<>();
         List<Standing> table = new ArrayList<>();
+        List<Match> season = new ArrayList<>();   // mọi trận của mùa (theo giờ đá): tìm trận tới của đội yêu thích
         boolean live() { for (Match m : matches) if (m.started && !m.finished) return true; return false; }
 
         /** Có trận đã tới giờ đá mà chưa xong (kể cả lúc API chưa kịp báo "đang đá"): cần cập nhật từng phút. */
@@ -84,6 +85,7 @@ final class Epl {
 
     // bảng xếp hạng: tải cả mùa (~380 trận) nên không lấy mỗi phút; có trận đang đá thì 2 phút, không thì 30 phút
     private static List<Standing> table = new ArrayList<>();
+    private static List<Match> season = new ArrayList<>();
     private static long tableAt;
 
     /**
@@ -106,7 +108,10 @@ final class Epl {
             dir.mkdirs();
             File meta = new File(dir, "meta.json");
             JSONObject m;
-            if (!meta.exists() || System.currentTimeMillis() - meta.lastModified() > META_MS) {
+            // bản lưu cũ chưa có tên viết tắt: lấy lại ngay thay vì chờ hết 3 tiếng
+            boolean stale = !meta.exists() || System.currentTimeMillis() - meta.lastModified() > META_MS
+                    || !read(meta).contains("\"abbr\"");
+            if (stale) {
                 m = buildMeta(get(API + "bootstrap-static/"));
                 write(meta, m.toString());
             } else {
@@ -127,6 +132,7 @@ final class Epl {
                 JSONObject t = ts.getJSONObject(i);
                 Team team = new Team();
                 team.name = t.getString("name");
+                team.abbr = t.optString("abbr", team.name.length() >= 3 ? team.name.substring(0, 3).toUpperCase(java.util.Locale.ROOT) : team.name);
                 team.code = t.getInt("code");
                 Bitmap raw = badgeRaw(dir, team.code);
                 team.badge = fit(raw, badgePx);
@@ -150,10 +156,16 @@ final class Epl {
             d.matches.sort((a, b) -> Long.compare(a.kick, b.kick));
             long age = System.currentTimeMillis() - tableAt;
             if (table.isEmpty() || age > (d.live() ? 2 : 30) * 60_000L) {
-                try { table = standings(new JSONArray(get(API + "fixtures/"))); tableAt = System.currentTimeMillis(); }
+                try {
+                    JSONArray all = new JSONArray(get(API + "fixtures/"));
+                    table = standings(all);
+                    season = matchesOf(all);
+                    tableAt = System.currentTimeMillis();
+                }
                 catch (Exception ignored) {}   // lỗi mạng: giữ bảng cũ
             }
             d.table = table;
+            d.season = season;
             last = d;
             return d;
         } catch (Exception e) {
@@ -198,7 +210,8 @@ final class Epl {
             JSONObject t = ts.getJSONObject(i);
             String name = t.getString("name");
             teams.put(new JSONObject().put("id", t.getInt("id")).put("code", t.getInt("code"))
-                    .put("name", NICE.containsKey(name) ? NICE.get(name) : name));
+                    .put("name", NICE.containsKey(name) ? NICE.get(name) : name)
+                    .put("abbr", t.optString("short_name", name.substring(0, Math.min(3, name.length())).toUpperCase(java.util.Locale.ROOT))));
         }
         return new JSONObject().put("cur", cur).put("next", next).put("teams", teams);
     }
@@ -249,6 +262,27 @@ final class Epl {
         }
         List<Standing> out = new ArrayList<>(by.values());
         out.sort((x, y) -> x.pts != y.pts ? y.pts - x.pts : x.gd() != y.gd() ? y.gd() - x.gd() : x.gf != y.gf ? y.gf - x.gf : x.team - y.team);
+        return out;
+    }
+
+    /** Các trận đã có lịch của cả mùa, xếp theo giờ đá. */
+    private static List<Match> matchesOf(JSONArray all) throws Exception {
+        List<Match> out = new ArrayList<>();
+        for (int i = 0; i < all.length(); i++) {
+            JSONObject f = all.getJSONObject(i);
+            if (f.isNull("kickoff_time")) continue;
+            Match x = new Match();
+            x.kick = java.time.Instant.parse(f.getString("kickoff_time")).toEpochMilli();
+            x.home = f.getInt("team_h");
+            x.away = f.getInt("team_a");
+            if (!f.isNull("team_h_score")) x.hs = f.getInt("team_h_score");
+            if (!f.isNull("team_a_score")) x.as = f.getInt("team_a_score");
+            x.started = f.optBoolean("started");
+            x.finished = f.optBoolean("finished") || f.optBoolean("finished_provisional");
+            x.minutes = f.optInt("minutes");
+            out.add(x);
+        }
+        out.sort((a, b) -> Long.compare(a.kick, b.kick));
         return out;
     }
 

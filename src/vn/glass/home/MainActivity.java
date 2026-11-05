@@ -169,8 +169,9 @@ public class MainActivity extends Activity {
         ui.post(clockTick);
         // giá chỉ cập nhật khi màn hình chính đang hiện
         applyWidgets();
-        resetEpl();
-        ui.removeCallbacks(eplCycle); ui.postDelayed(eplCycle, EPL_FIXTURES_MS);
+        ui.removeCallbacks(eplCycle);
+        if (eplView.mode() != EplView.COMPACT)
+            ui.postDelayed(eplCycle, eplView.mode() == EplView.TABLE ? EPL_TABLE_MS : EPL_FIXTURES_MS);
         ui.removeCallbacks(bgRotate); ui.postDelayed(bgRotate, bgRotateMs());
         armSaver();   // đứng yên ở màn hình chính 5 phút thì hiện màn hình chờ
         ui.removeCallbacks(showHomePrompt);
@@ -508,7 +509,29 @@ public class MainActivity extends Activity {
         Epl.badgePx = px(28);
         eplView = new EplView(this, px(1000) / 1000f, fontFor(600, 17), fontFor(500, 20));
         eplView.setFavorite(Wallpapers.favTeam(this));
+        // lượt đầy đủ chỉ chạy một lần mỗi lần box khởi động; về sau (kể cả khi hệ thống dọn launcher để nhường RAM
+        // cho app đang xem rồi mở lại) thì vào thẳng thẻ gọn
+        long boot = (System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime()) / 60_000L;
+        if (Math.abs(prefs().getLong("epl_full_boot", -10) - boot) <= 1) eplView.setMode(EplView.COMPACT);
+        else prefs().edit().putLong("epl_full_boot", boot).apply();
         eplBox.addView(eplView, new FrameLayout.LayoutParams(-2, -2));
+        View ring = new View(this);
+        eplRing = ring;
+        GradientDrawable rb = new GradientDrawable();
+        rb.setCornerRadius(px(20));
+        rb.setStroke(Math.max(2, px(3)), 0xD9FFFFFF);
+        ring.setBackground(rb);
+        ring.setAlpha(0f);
+        eplBox.addView(ring, new FrameLayout.LayoutParams(-1, -1));
+        // chỉ cho chọn khi đi từ nút bánh răng xuống (xem dispatchKeyEvent): bảng Cài đặt, hộp nhắc không lỡ trỏ vào
+        eplBox.setOnFocusChangeListener((v, has) -> {
+            if (!has) {
+                ring.animate().alpha(0f).setDuration(200).setInterpolator(EASE).start();
+                eplView.setSelected(EplView.SEL_NONE);
+                eplBox.setFocusable(false);
+            }
+            dimGlow(has);
+        });
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.START);
         lp.leftMargin = px(EPL_X); lp.topMargin = px(EPL_TOP);
         root.addView(eplBox, lp);
@@ -536,7 +559,7 @@ public class MainActivity extends Activity {
                         eplView.setData(d);
                         // khung kính đúng cỡ thẻ lịch (kính tự đo thì chiếm cả màn hình)
                         ViewGroup.LayoutParams lb = eplBox.getLayoutParams();
-                        lb.width = px(EplView.W);
+                        lb.width = px(eplView.designWidth());
                         lb.height = px(eplView.designHeight());
                         eplBox.setLayoutParams(lb);
                         if (eplBox.getVisibility() != View.VISIBLE && Wallpapers.widget(MainActivity.this, "epl")) {
@@ -582,57 +605,99 @@ public class MainActivity extends Activity {
 
     private long eplDemoUntil;   // đang xem thử: lượt lấy dữ liệu thật chen ngang (onResume) không được ghi đè
 
-    // thẻ bóng đá xoay vòng: lịch thi đấu 1 phút -> bảng xếp hạng 30 giây -> lại lịch
+    // Thẻ bóng đá: một lượt đầy đủ (lịch 1 phút -> bảng xếp hạng 30 giây) rồi thu gọn lại và ở yên đó.
+    // Muốn xem lại: từ nút bánh răng bấm xuống chọn thẻ, bấm OK là chạy lại đúng một lượt đầy đủ.
     private static final long EPL_FIXTURES_MS = 60_000L, EPL_TABLE_MS = 30_000L;
     private ValueAnimator eplResize;
+    private View eplRing;   // viền sáng cả thẻ khi chọn thẻ đầy đủ
 
     private final Runnable eplCycle = new Runnable() {
         @Override public void run() {
-            if (!eplView.hasTable() || eplBox.getVisibility() != View.VISIBLE || inShelf || settings != null) {
-                // đang che (vào hàng nội dung, mở Cài đặt) hoặc chưa có bảng: giữ lịch, hẹn lần sau
-                if (eplView.table()) swapEpl(false);
-                ui.postDelayed(this, EPL_FIXTURES_MS);
+            if (eplBox.getVisibility() != View.VISIBLE || inShelf || settings != null) {
+                ui.postDelayed(this, EPL_FIXTURES_MS);   // đang bị che: chưa đi tiếp, hẹn lần sau
                 return;
             }
-            boolean toTable = !eplView.table();
-            swapEpl(toTable);
-            ui.postDelayed(this, toTable ? EPL_TABLE_MS : EPL_FIXTURES_MS);
+            int m = eplView.mode();
+            if (m == EplView.FIXTURES && eplView.hasTable()) {
+                swapEpl(EplView.TABLE);
+                ui.postDelayed(this, EPL_TABLE_MS);
+            } else if (m != EplView.COMPACT) {
+                swapEpl(EplView.COMPACT);
+            }
         }
     };
 
-    /** Đổi lịch <-> bảng xếp hạng: chữ mờ đi, khung kính co giãn tới chiều cao mới, chữ mới hiện dần. */
-    private void swapEpl(boolean toTable) {
-        if (eplView.table() == toTable) return;
+    private final Runnable eplCollapse = new Runnable() {
+        @Override public void run() {
+            if (inShelf || settings != null) { ui.postDelayed(this, EPL_FIXTURES_MS); return; }   // đang che: để sau
+            swapEpl(EplView.COMPACT);
+        }
+    };
+
+    /**
+     * Bấm OK trên thẻ. Thẻ gọn: khu lịch đang chọn thì mở lịch đầy đủ (1 phút), khu bảng xếp hạng thì mở bảng
+     * đầy đủ (30 giây), xong tự thu gọn lại. Thẻ đang đầy đủ: thu gọn ngay.
+     */
+    private void stepEpl() {
+        ui.removeCallbacks(eplCycle);
+        ui.removeCallbacks(eplCollapse);
+        if (eplView.mode() == EplView.COMPACT) {
+            boolean table = eplView.selected() == EplView.SEL_TABLE;
+            swapEpl(table ? EplView.TABLE : EplView.FIXTURES);
+            ui.postDelayed(eplCollapse, table ? EPL_TABLE_MS : EPL_FIXTURES_MS);
+        } else {
+            swapEpl(EplView.COMPACT);
+        }
+    }
+
+    /** Thẻ gọn có khu nào để chọn: từ dưới lên ưu tiên bảng xếp hạng, từ trên xuống ưu tiên lịch. */
+    private int eplPart(boolean fromBelow) {
+        boolean m = eplView.hasMatchPart(), t = eplView.hasTablePart();
+        if (fromBelow) return t ? EplView.SEL_TABLE : m ? EplView.SEL_MATCH : EplView.SEL_NONE;
+        return m ? EplView.SEL_MATCH : t ? EplView.SEL_TABLE : EplView.SEL_NONE;
+    }
+
+    /** Chọn thẻ bằng điều khiển: thẻ gọn thì chọn đúng một khu, thẻ đầy đủ thì viền sáng cả thẻ. */
+    private void focusEpl(boolean fromBelow) {
+        eplBox.setFocusable(true);
+        eplBox.requestFocus();
+        if (eplView.mode() == EplView.COMPACT) eplView.setSelected(eplPart(fromBelow));
+        eplRing.animate().alpha(eplView.mode() == EplView.COMPACT ? 0f : 1f).setDuration(200).setInterpolator(EASE).start();
+    }
+
+    /** Đổi chế độ thẻ: chữ mờ đi, khung kính co giãn cả ngang lẫn dọc tới cỡ mới, chữ mới hiện dần. */
+    private void swapEpl(int to) {
+        if (eplView.mode() == to) return;
         eplView.animate().cancel();
-        eplView.animate().alpha(0f).setDuration(260).setInterpolator(EASE).withEndAction(() -> {
-            int from = eplBox.getLayoutParams().height;
-            eplView.setTable(toTable);
-            int to = px(eplView.designHeight());
+        eplView.animate().alpha(0f).setDuration(240).setInterpolator(EASE).withEndAction(() -> {
+            ViewGroup.LayoutParams cur = eplBox.getLayoutParams();
+            int w0 = cur.width > 0 ? cur.width : eplBox.getWidth(), h0 = cur.height > 0 ? cur.height : eplBox.getHeight();
+            eplView.setMode(to);
+            if (eplBox.hasFocus()) {
+                eplRing.animate().alpha(to == EplView.COMPACT ? 0f : 1f).setDuration(200).start();
+                eplView.setSelected(to == EplView.COMPACT ? eplPart(false) : EplView.SEL_NONE);
+            }
+            int w1 = px(eplView.designWidth()), h1 = px(eplView.designHeight());
             if (eplResize != null) eplResize.cancel();
-            eplResize = ValueAnimator.ofInt(from, to);
-            eplResize.setDuration(420);
+            eplResize = ValueAnimator.ofFloat(0f, 1f);
+            eplResize.setDuration(440);
             eplResize.setInterpolator(EASE);
             eplResize.addUpdateListener(a -> {
+                float f = (float) a.getAnimatedValue();
                 ViewGroup.LayoutParams lb = eplBox.getLayoutParams();
-                lb.height = (int) a.getAnimatedValue();
+                lb.width = Math.round(w0 + (w1 - w0) * f);
+                lb.height = Math.round(h0 + (h1 - h0) * f);
                 eplBox.setLayoutParams(lb);
             });
             eplResize.start();
-            eplView.animate().alpha(1f).setStartDelay(160).setDuration(360).setInterpolator(EASE).start();
+            eplView.animate().alpha(1f).setStartDelay(180).setDuration(360).setInterpolator(EASE).start();
         }).start();
     }
 
-    /** Về lại lịch thi đấu ngay (không hiệu ứng), dùng khi quay lại màn hình chính. */
-    private void resetEpl() {
-        if (eplResize != null) eplResize.cancel();
-        eplView.animate().cancel();
-        eplView.setAlpha(1f);
-        if (eplView.table()) {
-            eplView.setTable(false);
-            ViewGroup.LayoutParams lb = eplBox.getLayoutParams();
-            lb.height = px(eplView.designHeight());
-            eplBox.setLayoutParams(lb);
-        }
+    /** Chọn được thẻ bằng điều khiển khi đang hiện trên màn hình chính. */
+    private boolean eplSelectable() {
+        return eplBox != null && eplBox.getVisibility() == View.VISIBLE && eplBox.getAlpha() > 0.5f
+                && !inShelf && settings == null && allApps == null && homePrompt == null;
     }
 
     private void buildTicker() {
@@ -2229,11 +2294,34 @@ public class MainActivity extends Activity {
                 else if (inShelf) exitShelf();
                 return true;   // launcher không thoát khi bấm Back
             }
+            if (allApps == null && eplBox.hasFocus()) {
+                // đang chọn thẻ bóng đá
+                boolean compact = eplView.mode() == EplView.COMPACT;
+                if (kc == KeyEvent.KEYCODE_DPAD_UP) {
+                    root.playSoundEffect(android.view.SoundEffectConstants.NAVIGATION_UP);
+                    if (compact && eplView.selected() == EplView.SEL_TABLE && eplView.hasMatchPart()) eplView.setSelected(EplView.SEL_MATCH);
+                    else gear.requestFocus();
+                    return true;
+                }
+                if (kc == KeyEvent.KEYCODE_DPAD_DOWN) {
+                    root.playSoundEffect(android.view.SoundEffectConstants.NAVIGATION_DOWN);
+                    if (compact && eplView.selected() == EplView.SEL_MATCH && eplView.hasTablePart()) eplView.setSelected(EplView.SEL_TABLE);
+                    else cards.get(focused).requestFocus();
+                    return true;
+                }
+                if (kc == KeyEvent.KEYCODE_DPAD_CENTER || kc == KeyEvent.KEYCODE_ENTER) {
+                    root.playSoundEffect(android.view.SoundEffectConstants.CLICK);
+                    stepEpl(); return true;
+                }
+                return true;   // trái/phải: đứng yên
+            }
             if (allApps == null && gear.hasFocus()) {
                 // ở nút Cài đặt: xuống thì về đúng ô app đang chọn, các hướng khác đứng yên
                 if (kc == KeyEvent.KEYCODE_DPAD_DOWN) {
                     root.playSoundEffect(android.view.SoundEffectConstants.NAVIGATION_DOWN);
-                    cards.get(focused).requestFocus(); return true;
+                    if (eplSelectable()) focusEpl(false);
+                    else cards.get(focused).requestFocus();
+                    return true;
                 }
                 if (kc == KeyEvent.KEYCODE_DPAD_UP || kc == KeyEvent.KEYCODE_DPAD_LEFT || kc == KeyEvent.KEYCODE_DPAD_RIGHT) return true;
             }
@@ -2249,7 +2337,9 @@ public class MainActivity extends Activity {
             if (allApps == null) {
                 if (kc == KeyEvent.KEYCODE_DPAD_UP && !inShelf) {
                     root.playSoundEffect(android.view.SoundEffectConstants.NAVIGATION_UP);
-                    gear.requestFocus(); return true;
+                    if (eplSelectable() && eplView.mode() == EplView.COMPACT && eplPart(true) != EplView.SEL_NONE) focusEpl(true);
+                    else gear.requestFocus();
+                    return true;
                 }
                 // hai phím này launcher tự xử lý nên hệ thống không phát tiếng: gọi âm điều hướng hệ thống bằng tay
                 if (kc == KeyEvent.KEYCODE_DPAD_DOWN && !inShelf) {
