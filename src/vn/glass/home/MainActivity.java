@@ -112,6 +112,7 @@ public class MainActivity extends Activity {
         buildUi();
         setContentView(root);
         watchTvProvider(true);
+        watchNetwork(true);
         // mở bằng nút APPS khi launcher chưa chạy: dựng xong giao diện rồi sang ảnh kế tiếp
         String act = getIntent() == null ? null : getIntent().getAction();
         if (isAppsButton(act)) root.post(this::nextBackground);
@@ -137,6 +138,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         watchTvProvider(false);
+        watchNetwork(false);
         bg.shutdownNow();
         net.shutdownNow();
         super.onDestroy();
@@ -570,6 +572,7 @@ public class MainActivity extends Activity {
                         long nk = d.nextKick(now);
                         wait = d.inPlayWindow(now) ? 60_000L
                                 : Math.max(60_000L, Math.min(3 * 3600_000L, nk > 0 ? nk - now + 60_000L : 3 * 3600_000L));
+                        if (!eplView.hasTable()) wait = 60_000L;
                     }
                     ui.removeCallbacks(eplTick);
                     ui.postDelayed(eplTick, wait);
@@ -1551,6 +1554,38 @@ public class MainActivity extends Activity {
         launchPkg(it.pkg, src);
     }
 
+    // ---------- có mạng trở lại ----------
+    // Lúc box vừa khởi động, launcher chạy trước khi có mạng: lần tải đầu hỏng, rồi phải đợi lượt sau (giãn dần,
+    // có khi rất lâu). Hệ thống báo có mạng thì tải lại ngay những gì còn thiếu.
+
+    private android.net.ConnectivityManager.NetworkCallback netCb;
+
+    private void watchNetwork(boolean on) {
+        android.net.ConnectivityManager cm = getSystemService(android.net.ConnectivityManager.class);
+        if (cm == null) return;
+        try {
+            if (on && netCb == null) {
+                netCb = new android.net.ConnectivityManager.NetworkCallback() {
+                    @Override public void onAvailable(android.net.Network n) { ui.postDelayed(MainActivity.this::onNetworkBack, 1500); }
+                };
+                cm.registerDefaultNetworkCallback(netCb);
+            } else if (!on && netCb != null) {
+                cm.unregisterNetworkCallback(netCb);
+                netCb = null;
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private void onNetworkBack() {
+        if (isFinishing() || !shown()) return;   // đang xem app khác: lúc quay về màn hình chính sẽ tự tải
+        if (Wallpapers.widget(this, "epl") && (eplView.data() == null || !eplView.hasTable() || eplFailMs > 0)) {
+            eplFailMs = 0;
+            ui.removeCallbacks(eplTick);
+            ui.post(eplTick);
+        }
+        if (Wallpapers.widget(this, "gold") && goldOkAt == 0) { ui.removeCallbacks(goldTick); ui.post(goldTick); }
+    }
+
     // ---------- nhắc đặt Glass Home làm màn hình chính ----------
     // Google TV không có chỗ chọn launcher. Máy chưa đặt bằng máy tính (adb) thì nhắc bật dịch vụ HomeGuard trong
     // Hỗ trợ tiếp cận: bật tivi và bấm Home sẽ vào Glass Home. "Để sau" thì thôi nhắc tới lần khởi động lại app.
@@ -2337,7 +2372,7 @@ public class MainActivity extends Activity {
             if (allApps == null) {
                 if (kc == KeyEvent.KEYCODE_DPAD_UP && !inShelf) {
                     root.playSoundEffect(android.view.SoundEffectConstants.NAVIGATION_UP);
-                    if (eplSelectable() && eplView.mode() == EplView.COMPACT && eplPart(true) != EplView.SEL_NONE) focusEpl(true);
+                    if (eplSelectable() && (eplView.mode() != EplView.COMPACT || eplPart(true) != EplView.SEL_NONE)) focusEpl(true);
                     else gear.requestFocus();
                     return true;
                 }
