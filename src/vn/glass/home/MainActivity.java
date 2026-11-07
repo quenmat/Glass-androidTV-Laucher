@@ -1935,12 +1935,17 @@ public class MainActivity extends Activity {
         allApps.setBackgroundColor(0xF0050507);
         appsArtFor = null;
         allApps.setAlpha(0f);
-        ScrollView sv = new ScrollView(this);
+        // ScrollView không tự cuộn khi đổi ô (nó cuộn giật, tức thì); bảng tự cuộn bằng hiệu ứng mềm ở dưới
+        ScrollView sv = new ScrollView(this) {
+            @Override protected int computeScrollDeltaToGetChildRectOnScreen(android.graphics.Rect r) { return 0; }
+        };
         sv.setClipChildren(false);
+        sv.setClipToPadding(false);
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         col.setPadding(px(110), px(70), px(110), px(70));
         col.setClipChildren(false);
+        col.setClipToPadding(false);   // quầng sáng của ô cột trái tràn vào lề trái, không bị cắt
         View first = null;
         List<Apps.App> games = Apps.games(this);
         if (!games.isEmpty()) {
@@ -1988,6 +1993,28 @@ public class MainActivity extends Activity {
             if (first == null) first = tile;
         }
         sv.addView(col);
+        // cuộn theo ô đang chọn: lên tới hàng đầu của một nhóm thì kéo hết lên để thấy cả tiêu đề nhóm (Trò chơi,
+        // Ứng dụng); ô khác thì luôn chừa khoảng thoáng phía trên, không để ô dính sát mép màn hình
+        sv.setSmoothScrollingEnabled(true);
+        sv.getViewTreeObserver().addOnGlobalFocusChangeListener((o, n) -> {
+            if (n == null || !(n.getParent() instanceof GridLayout) || n.getParent().getParent() != col) return;
+            View g = (View) n.getParent();
+            int idx = col.indexOfChild(g);
+            View head = idx > 0 ? col.getChildAt(idx - 1) : null;
+            int tileTop = g.getTop() + n.getTop();
+            int target;
+            // hàng đầu của nhóm: kéo lên thấy cả tiêu đề; nhóm đầu tiên thì về đúng như lúc mới mở bảng
+            if (n.getTop() < px(20) && head != null) target = idx <= 1 ? 0 : head.getTop() - px(70);
+            else {
+                // ô lọt ra ngoài phía trên hoặc phía dưới: cuộn vừa đủ, chừa khoảng thoáng ~150px; còn trong khung thì đứng yên
+                int bottom = tileTop + n.getHeight();
+                target = sv.getScrollY();
+                if (tileTop - target < px(150)) target = tileTop - px(150);
+                else if (bottom - target > sv.getHeight() - px(120)) target = bottom - sv.getHeight() + px(120);
+            }
+            int t = Math.max(0, target);
+            sv.post(() -> scrollAppsTo(sv, t));
+        });
         // nền sau bảng: chọn ô game thì hiện ảnh lớn của game (như PS4), ô khác thì tối như cũ
         appsArt = fullImage();
         appsArt.setAlpha(0f);
@@ -2004,6 +2031,21 @@ public class MainActivity extends Activity {
         dimGlow(true);
         allApps.animate().alpha(1f).setDuration(220).start();
         if (first != null) first.requestFocus();
+    }
+
+    private ValueAnimator appsScroll;
+
+    /** Cuộn bảng Apps mềm (cùng đường cong EASE với mọi chuyển động của launcher), cuộn tiếp từ vị trí đang dở. */
+    private void scrollAppsTo(ScrollView sv, int y) {
+        int max = Math.max(0, sv.getChildAt(0).getHeight() - sv.getHeight());
+        int to = Math.max(0, Math.min(max, y)), from = sv.getScrollY();
+        if (appsScroll != null) appsScroll.cancel();
+        if (to == from) return;
+        appsScroll = ValueAnimator.ofInt(from, to);
+        appsScroll.setDuration(Math.min(520, 300 + Math.abs(to - from) / 4));
+        appsScroll.setInterpolator(EASE);
+        appsScroll.addUpdateListener(a -> sv.scrollTo(0, (int) a.getAnimatedValue()));
+        appsScroll.start();
     }
 
     private ImageView appsArt;
@@ -2038,13 +2080,39 @@ public class MainActivity extends Activity {
         name.setText(g.label);
         name.setSingleLine(true);
         t.addView(name, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
+        View glow = tileGlow(t, img);
         t.setOnFocusChangeListener((v, has) -> {
             float s = has ? 1.08f : 1f;
             img.animate().scaleX(s).scaleY(s).translationZ(has ? px(18) : 0).setDuration(180).start();
+            glow.animate().alpha(has ? 1f : 0f).setDuration(has ? 260 : 160).setInterpolator(EASE).start();
             if (has) appsBackdrop(g.bgFile);
         });
         t.setOnClickListener(v -> { launchGame(g.pkg, g.launchUri, g.launchActivity, v); rememberGame(g); closeAllApps(); });
         return t;
+    }
+
+    private static final int APP_TILE_W = 300, APP_TILE_H = 169, APP_TILE_R = 14, APP_GLOW = 60;
+
+    /**
+     * Quầng sáng của ô trong bảng Apps (cùng kiểu với dock): ôm đúng ô lúc đã phóng 108%, màu theo logo, khoét lỗ
+     * giữa nên không phủ lên ảnh. Ảnh quầng chỉ dựng lúc ô được chọn lần đầu (bảng có nhiều ô, đỡ tốn bộ nhớ).
+     */
+    private View tileGlow(FrameLayout t, ImageView img) {
+        float sc = 1.08f;
+        int cw = Math.round(px(APP_TILE_W) * sc), ch = Math.round(px(APP_TILE_H) * sc), sp = px(APP_GLOW);
+        ImageView g = new ImageView(this);
+        g.setAlpha(0f);
+        g.setTranslationZ(px(19));   // trên ảnh ô đang nổi (translationZ 18), chỉ lộ phần quanh mép nhờ lỗ khoét
+        FrameLayout.LayoutParams lg = new FrameLayout.LayoutParams(cw + sp * 2, ch + sp * 2);
+        lg.leftMargin = Math.round(px(APP_TILE_W) / 2f - (cw + sp * 2) / 2f);
+        lg.topMargin = Math.round(px(APP_TILE_H) / 2f - (ch + sp * 2) / 2f);
+        t.addView(g, lg);
+        t.getViewTreeObserver().addOnGlobalFocusChangeListener((o, n) -> {
+            if (n != t || g.getDrawable() != null || img.getDrawable() == null) return;
+            Bitmap art = toBitmap(img.getDrawable(), px(APP_TILE_W) / 4, px(APP_TILE_H) / 4);
+            g.setImageBitmap(Glow.make(cw, ch, px(APP_TILE_R) * sc, sp, Glow.dominant(art)));
+        });
+        return g;
     }
 
     private FrameLayout appTile(PackageManager pm, ResolveInfo ri) {
@@ -2076,9 +2144,11 @@ public class MainActivity extends Activity {
         FrameLayout.LayoutParams ln = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
         t.addView(name, ln);
         String pkg = ri.activityInfo.packageName;
+        View glow = tileGlow(t, img);
         t.setOnFocusChangeListener((v, has) -> {
             float s = has ? 1.08f : 1f;
             img.animate().scaleX(s).scaleY(s).translationZ(has ? px(18) : 0).setDuration(180).start();
+            glow.animate().alpha(has ? 1f : 0f).setDuration(has ? 260 : 160).setInterpolator(EASE).start();
             if (has) appsBackdrop(null);
         });
         t.setOnClickListener(v -> { launchPkg(pkg, v); closeAllApps(); });
