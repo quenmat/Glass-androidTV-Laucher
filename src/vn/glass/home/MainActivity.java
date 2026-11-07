@@ -150,7 +150,7 @@ public class MainActivity extends Activity {
         // vừa cài/gỡ app (ví dụ từ Play Store quay về): dựng lại dock để ô mới hiện ngay trước Play Store
         List<Apps.App> now = Apps.dock(this);
         boolean same = now.size() == apps.size();
-        for (int i = 0; same && i < now.size(); i++) same = now.get(i).pkg.equals(apps.get(i).pkg);
+        for (int i = 0; same && i < now.size(); i++) same = java.util.Objects.equals(now.get(i).pkg, apps.get(i).pkg);
         if (!same) { recreate(); return; }
         hideSystemBars();
         // xin quyền đọc nội dung một lần; bị từ chối thì thôi, không hỏi lại mỗi lần quay về
@@ -345,10 +345,11 @@ public class MainActivity extends Activity {
         cell.setFocusableInTouchMode(true);
 
         // thu về đúng cỡ ô lúc được chọn để khi phóng to, ảnh khớp 1:1 với điểm ảnh màn hình
-        Bitmap art = a.key != null
-                ? scaleHQ(asset("cards/" + a.key + ".png"), px(SEL_W), px(SEL_H))
+        Bitmap own = a.cardFile == null ? null : BitmapFactory.decodeFile(a.cardFile);
+        Bitmap art = own != null ? scaleHQ(own, px(SEL_W), px(SEL_H))
+                : a.key != null ? scaleHQ(asset("cards/" + a.key + ".png"), px(SEL_W), px(SEL_H))
                 : appCard(a.pkg, px(SEL_W), px(SEL_H));
-        int glowColor = a.isSettings() ? Color.WHITE : Glow.dominant(art);
+        int glowColor = a.isAllApps() ? Color.WHITE : Glow.dominant(art);
         // quầng theo đúng ô lúc đang chọn (300x188), kể cả độ bo góc
         glowBitmaps.add(Glow.make(px(SEL_W), px(SEL_H), px(SEL_R), px(GLOW_SPREAD), glowColor));
 
@@ -1205,6 +1206,8 @@ public class MainActivity extends Activity {
         for (Shelf.Item it : items) if (!it.pkg.equals(items.get(0).pkg)) { mixed = true; break; }
         CharSequence head;
         if (items.isEmpty()) head = "";
+        else if (a.isAllApps()) head = heading("Mở gần đây", null);
+        else if (a.launchUri != null) head = heading(a.label, null);
         else if (mixed || own.isEmpty()) head = heading("Xem tiếp", null);
         else head = heading(own.get(0).continueWatching ? "Đang xem dở" : "Gợi ý", a.label);
         rowItems = items;
@@ -1230,8 +1233,9 @@ public class MainActivity extends Activity {
             // ảnh của Netflix đã in sẵn chữ N đỏ ở góc: không dán logo app đè lên, giữ chữ N gốc
             boolean branded = "com.netflix.ninja".equals(it.pkg);
             // iQIYI: ảnh không có logo của app, nên luôn gắn logo nhỏ ở góc trên trái (như chữ N trên ảnh Netflix)
-            Bitmap mark = markFor(it.pkg);   // logo nhỏ không khung (iQIYI): luôn gắn, kể cả hàng của chính app
-            Bitmap bb = mark != null ? mark : (mixed || own.isEmpty()) && !branded ? badgeFor(it.pkg) : null;
+            Bitmap mark = a.isAllApps() || a.launchUri != null ? null : markFor(it.pkg);   // logo nhỏ không khung (iQIYI): luôn gắn, kể cả hàng của chính app
+            // hàng "Mở gần đây": bản thân ô đã là logo app, không gắn thêm
+            Bitmap bb = mark != null ? mark : (mixed || own.isEmpty()) && !branded && !a.isAllApps() && a.launchUri == null ? badgeFor(it.pkg) : null;
             badge.setVisibility(bb == null ? View.GONE : View.VISIBLE);
             if (bb != null) {
                 badge.setImageBitmap(bb);
@@ -1270,7 +1274,22 @@ public class MainActivity extends Activity {
 
     private static final long BG_SETTLE_MS = 180;
     // đổi app chỉ đổi hàng nội dung; nền giữ nguyên, tự sang ảnh khác theo nhịp chọn trong Cài đặt
-    private final Runnable pendingBg = () -> fillRow(apps.get(focused));
+    // ô game có ảnh nền riêng: nền cả màn hình hoà sang ảnh của game (như PS4); rời ô game thì về ảnh nền thường
+    private final Runnable pendingBg = () -> {
+        Apps.App a = apps.get(focused);
+        fillRow(a);
+        if (a.bgFile != null) showGameBackground(a.bgFile);
+        else if (bgShown != null && bgShown.startsWith("game:")) showBackground();
+    };
+
+    private void showGameBackground(String path) {
+        String key = "game:" + path;
+        if (key.equals(bgShown)) return;
+        bgShown = key;
+        images.load(android.net.Uri.fromFile(new File(path)).toString(), bgWidth(), bmp -> {
+            if (key.equals(bgShown)) crossfade(bmp, BG_FALLBACK);
+        });
+    }
 
     private static final int BG_FALLBACK = 0xFF1E2A44;   // chưa có ảnh nào: nền màu xanh đêm
 
@@ -1333,7 +1352,8 @@ public class MainActivity extends Activity {
     // tới lượt ảnh chung kế tiếp: chỉ đổi khi đang đứng ở dock (đang soi hàng nội dung thì giữ nền của ô)
     private final Runnable bgRotate = new Runnable() {
         @Override public void run() {
-            if (!inShelf && allApps == null) showBackground();
+            // đang chọn ô game (nền là ảnh game) thì không đổi sang ảnh nền khác
+            if (!inShelf && allApps == null && apps.get(focused).bgFile == null) showBackground();
             ui.postDelayed(this, bgRotateMs());
         }
     };
@@ -1518,7 +1538,20 @@ public class MainActivity extends Activity {
     }
 
     private List<Shelf.Item> itemsOf(Apps.App a) {
-        if (a.isSettings()) return Collections.emptyList();
+        if (a.isAllApps()) return recentApps();   // ô Apps: hàng là các app mở gần nhất
+        if (a.launchUri != null) {
+            // ô game: ảnh bìa và ảnh lúc đang chơi; bấm ảnh nào cũng vào thẳng game
+            List<Shelf.Item> out = new ArrayList<>();
+            for (String path : a.thumbs) {
+                Shelf.Item it = new Shelf.Item();
+                it.pkg = a.pkg;
+                it.art = android.net.Uri.fromFile(new File(path)).toString();
+                it.gameUri = a.launchUri;
+                it.gameActivity = a.launchActivity;
+                out.add(it);
+            }
+            return out;
+        }
         List<Shelf.Item> l = shelf.get(a.pkg);
         return l == null ? Collections.emptyList() : l;
     }
@@ -1527,16 +1560,81 @@ public class MainActivity extends Activity {
 
     private void launch(Apps.App a, View src) {
         try {
-            if (a.isSettings()) { startActivity(new Intent(Settings.ACTION_SETTINGS), zoomFrom(src)); return; }
+            if (a.isAllApps()) { openAllApps(); return; }   // ô Apps: bảng tất cả ứng dụng (có Cửa hàng Play)
+            if (a.launchUri != null) { launchGame(a.pkg, a.launchUri, a.launchActivity, src); return; }
             launchPkg(a.pkg, src);
         } catch (Exception ignored) {}
+    }
+
+    /**
+     * Ô game: mở thẳng file game bằng app giả lập (như lối tắt PPSSPP tự tạo). Đường dẫn file:// sang app khác bị
+     * Android chặn mặc định (chống lộ file của chính mình); file game nằm trong thư mục của app giả lập, không phải
+     * của Glass Home, nên tạm bỏ chặn đúng lúc gửi lệnh rồi đặt lại.
+     */
+    private void launchGame(String pkg, String uri, String activity, View src) {
+        // kiểu file bắt buộc: bộ lọc mở file của PPSSPP chỉ nhận lệnh có kèm kiểu (bất kỳ)
+        Intent i = new Intent(Intent.ACTION_VIEW).setDataAndType(android.net.Uri.parse(uri), "application/octet-stream")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        if (activity != null) i.setClassName(pkg, activity); else i.setPackage(pkg);
+        android.os.StrictMode.VmPolicy old = android.os.StrictMode.getVmPolicy();
+        android.os.StrictMode.setVmPolicy(new android.os.StrictMode.VmPolicy.Builder().build());
+        try { startActivity(i, zoomFrom(src)); }
+        catch (Exception e) { launchPkg(pkg, src); }   // lệnh mở thẳng không được: mở app giả lập như thường
+        finally { android.os.StrictMode.setVmPolicy(old); }
     }
 
     private void launchPkg(String pkg, View src) {
         PackageManager pm = getPackageManager();
         Intent i = pm.getLeanbackLaunchIntentForPackage(pkg);
         if (i == null) i = pm.getLaunchIntentForPackage(pkg);
-        if (i != null) startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), zoomFrom(src));
+        if (i != null) { startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), zoomFrom(src)); rememberOpened(pkg); }
+    }
+
+    // ---------- app mở gần đây (hàng nội dung dưới ô Apps) ----------
+    // Chỉ biết những app mở từ Glass Home (dock, bảng Apps, hàng nội dung); app mở bằng giọng nói hay nút trên
+    // điều khiển thì không thấy (đọc lịch sử dùng app của cả máy cần quyền đặc biệt mà Google TV không cho bật).
+
+    private void rememberGame(Apps.App g) { rememberOpened(g.key); }
+
+    private void rememberOpened(String pkg) {
+        if (pkg == null || pkg.equals(getPackageName())) return;
+        List<String> l = new ArrayList<>(java.util.Arrays.asList(prefs().getString("recent_apps", "").split(",")));
+        l.remove("");
+        l.remove(pkg);
+        l.add(0, pkg);
+        while (l.size() > 12) l.remove(l.size() - 1);
+        prefs().edit().putString("recent_apps", String.join(",", l)).apply();
+        shelfVersion++;   // hàng của ô Apps đổi theo
+    }
+
+    /** Tối đa 5 app mở gần nhất còn cài trên máy: ảnh là ô vẽ sẵn nếu có, không thì banner TV của app. */
+    private List<Shelf.Item> recentApps() {
+        List<Shelf.Item> out = new ArrayList<>();
+        PackageManager pm = getPackageManager();
+        List<Apps.App> games = Apps.games(this);
+        for (String pkg : prefs().getString("recent_apps", "").split(",")) {
+            if (pkg.isEmpty() || out.size() >= SHELF_N) continue;
+            if (pkg.startsWith("game:")) {
+                for (Apps.App g : games) if (pkg.equals(g.key)) {
+                    Shelf.Item it = new Shelf.Item();
+                    it.pkg = g.pkg;
+                    it.title = g.label;
+                    it.art = g.cardFile != null ? android.net.Uri.fromFile(new File(g.cardFile)).toString() : null;
+                    it.gameUri = g.launchUri;
+                    it.gameActivity = g.launchActivity;
+                    if (it.art != null) out.add(it);
+                }
+                continue;
+            }
+            if (pm.getLeanbackLaunchIntentForPackage(pkg) == null && pm.getLaunchIntentForPackage(pkg) == null) continue;
+            Shelf.Item it = new Shelf.Item();
+            it.pkg = pkg;
+            try { it.title = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString(); } catch (Exception e) { it.title = pkg; }
+            String card = Apps.cardKey(pkg);
+            it.art = card != null ? Wallpapers.ASSET + "cards/" + card + ".png" : Images.APP + pkg;
+            out.add(it);
+        }
+        return out;
     }
 
     /** Mở đúng nội dung; không mở được thì mở app của nội dung đó (hàng có thể trộn nhiều app). */
@@ -1544,10 +1642,16 @@ public class MainActivity extends Activity {
         List<Shelf.Item> items = rowItems;
         if (i >= items.size()) return;
         Shelf.Item it = items.get(i);
+        if (it.gameUri != null) {
+            launchGame(it.pkg, it.gameUri, it.gameActivity, src);
+            for (Apps.App g : Apps.games(this)) if (it.gameUri.equals(g.launchUri)) rememberGame(g);
+            return;
+        }
         try {
             if (it.intent != null) {
                 startActivity(Intent.parseUri(it.intent, Intent.URI_INTENT_SCHEME)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), zoomFrom(src));
+                rememberOpened(it.pkg);
                 return;
             }
         } catch (Exception ignored) {}
@@ -1829,6 +1933,7 @@ public class MainActivity extends Activity {
         if (allApps != null) return;
         allApps = new FrameLayout(this);
         allApps.setBackgroundColor(0xF0050507);
+        appsArtFor = null;
         allApps.setAlpha(0f);
         ScrollView sv = new ScrollView(this);
         sv.setClipChildren(false);
@@ -1836,6 +1941,28 @@ public class MainActivity extends Activity {
         col.setOrientation(LinearLayout.VERTICAL);
         col.setPadding(px(110), px(70), px(110), px(70));
         col.setClipChildren(false);
+        View first = null;
+        List<Apps.App> games = Apps.games(this);
+        if (!games.isEmpty()) {
+            TextView gh = text(600, 40, 0xFFFFFFFF);
+            gh.setText("Trò chơi");
+            col.addView(gh);
+            GridLayout gg = new GridLayout(this);
+            gg.setColumnCount(5);
+            gg.setClipChildren(false);
+            LinearLayout.LayoutParams lgg = new LinearLayout.LayoutParams(-2, -2);
+            lgg.topMargin = px(40);
+            lgg.bottomMargin = px(30);
+            col.addView(gg, lgg);
+            for (Apps.App g : games) {
+                FrameLayout tile = gameTile(g);
+                GridLayout.LayoutParams gl = new GridLayout.LayoutParams();
+                gl.width = px(300); gl.height = px(220);
+                gl.setMargins(px(10), px(10), px(26), px(26));
+                gg.addView(tile, gl);
+                if (first == null) first = tile;
+            }
+        }
         TextView h = text(600, 40, 0xFFFFFFFF);
         h.setText("Ứng dụng");
         col.addView(h);
@@ -1850,7 +1977,6 @@ public class MainActivity extends Activity {
         List<ResolveInfo> ris = pm.queryIntentActivities(
                 new Intent(Intent.ACTION_MAIN).addCategory("android.intent.category.LEANBACK_LAUNCHER"), 0);
         Collections.sort(ris, (x, y) -> String.valueOf(x.loadLabel(pm)).compareToIgnoreCase(String.valueOf(y.loadLabel(pm))));
-        View first = null;
         for (ResolveInfo ri : ris) {
             String pkg = ri.activityInfo.packageName;
             if (pkg.equals(getPackageName()) || pkg.startsWith("vn.glass.")) continue;
@@ -1862,6 +1988,13 @@ public class MainActivity extends Activity {
             if (first == null) first = tile;
         }
         sv.addView(col);
+        // nền sau bảng: chọn ô game thì hiện ảnh lớn của game (như PS4), ô khác thì tối như cũ
+        appsArt = fullImage();
+        appsArt.setAlpha(0f);
+        allApps.addView(appsArt);
+        View shade = new View(this);
+        shade.setBackgroundColor(0x8C050507);
+        allApps.addView(shade, new FrameLayout.LayoutParams(-1, -1));
         allApps.addView(sv, new FrameLayout.LayoutParams(-1, -1));
         root.addView(allApps, new FrameLayout.LayoutParams(-1, -1));
         // khoá dock + hàng nội dung phía sau để con trỏ không lọt ra ngoài bảng; tắt quầng "thở"
@@ -1871,6 +2004,47 @@ public class MainActivity extends Activity {
         dimGlow(true);
         allApps.animate().alpha(1f).setDuration(220).start();
         if (first != null) first.requestFocus();
+    }
+
+    private ImageView appsArt;
+    private String appsArtFor;
+
+    /** Nền sau bảng Apps theo ô đang chọn: ảnh game hiện dần, rời ô game thì mờ đi. */
+    private void appsBackdrop(String bgFile) {
+        if (appsArt == null) return;
+        if (bgFile == null) { appsArtFor = null; appsArt.animate().alpha(0f).setDuration(300).start(); return; }
+        if (bgFile.equals(appsArtFor)) return;
+        appsArtFor = bgFile;
+        ImageView target = appsArt;
+        images.load(android.net.Uri.fromFile(new File(bgFile)).toString(), bgWidth(), bmp -> {
+            if (!bgFile.equals(appsArtFor) || bmp == null || target != appsArt) return;
+            target.setImageBitmap(bmp);
+            target.animate().alpha(1f).setDuration(420).setInterpolator(EASE).start();
+        });
+    }
+
+    /** Ô game trong bảng Apps: ảnh ô của game (logo), tên bên dưới; bấm là vào thẳng game. */
+    private FrameLayout gameTile(Apps.App g) {
+        FrameLayout t = new FrameLayout(this);
+        t.setFocusable(true);
+        t.setClipChildren(false);
+        ImageView img = new ImageView(this);
+        img.setScaleType(ImageView.ScaleType.FIT_XY);
+        Bitmap card = g.cardFile == null ? null : BitmapFactory.decodeFile(g.cardFile);
+        if (card != null) img.setImageBitmap(scaleHQ(card, px(300), px(169)));
+        shadowShape(img, px(14));
+        t.addView(img, new FrameLayout.LayoutParams(-1, px(169)));
+        TextView name = text(500, 22, 0xD9FFFFFF);
+        name.setText(g.label);
+        name.setSingleLine(true);
+        t.addView(name, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
+        t.setOnFocusChangeListener((v, has) -> {
+            float s = has ? 1.08f : 1f;
+            img.animate().scaleX(s).scaleY(s).translationZ(has ? px(18) : 0).setDuration(180).start();
+            if (has) appsBackdrop(g.bgFile);
+        });
+        t.setOnClickListener(v -> { launchGame(g.pkg, g.launchUri, g.launchActivity, v); rememberGame(g); closeAllApps(); });
+        return t;
     }
 
     private FrameLayout appTile(PackageManager pm, ResolveInfo ri) {
@@ -1905,6 +2079,7 @@ public class MainActivity extends Activity {
         t.setOnFocusChangeListener((v, has) -> {
             float s = has ? 1.08f : 1f;
             img.animate().scaleX(s).scaleY(s).translationZ(has ? px(18) : 0).setDuration(180).start();
+            if (has) appsBackdrop(null);
         });
         t.setOnClickListener(v -> { launchPkg(pkg, v); closeAllApps(); });
         return t;

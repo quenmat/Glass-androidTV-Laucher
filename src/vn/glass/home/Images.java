@@ -79,7 +79,33 @@ final class Images {
         });
     }
 
+    /** Ảnh ô app cho hàng "Mở gần đây": "app:<package>" -> banner TV của app (không có thì biểu tượng trên nền tối). */
+    static final String APP = "app:";
+
+    private Bitmap appBanner(String pkg, int reqW) throws Exception {
+        android.content.pm.PackageManager pm = ctx.getPackageManager();
+        android.graphics.drawable.Drawable d = null;
+        android.content.Intent lb = pm.getLeanbackLaunchIntentForPackage(pkg);
+        if (lb != null) { try { d = pm.getActivityBanner(lb); } catch (Exception ignored) {} }
+        if (d == null) d = pm.getApplicationBanner(pkg);
+        int w = reqW, h = reqW * 9 / 16;
+        Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        android.graphics.Canvas c = new android.graphics.Canvas(b);
+        if (d != null) {
+            d.setBounds(0, 0, w, h);
+            d.draw(c);
+            return b;
+        }
+        c.drawColor(0xFF1C1C1E);
+        android.graphics.drawable.Drawable icon = pm.getApplicationIcon(pkg);
+        int s = h / 2;
+        icon.setBounds((w - s) / 2, (h - s) / 2, (w + s) / 2, (h + s) / 2);
+        icon.draw(c);
+        return b;
+    }
+
     private Bitmap decode(String uri, int reqW) throws Exception {
+        if (uri.startsWith(APP)) return appBanner(uri.substring(APP.length()), reqW);
         byte[] data = readAll(open(uri));
         BitmapFactory.Options o = new BitmapFactory.Options();
         o.inJustDecodeBounds = true;

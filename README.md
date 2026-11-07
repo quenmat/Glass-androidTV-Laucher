@@ -24,7 +24,11 @@ Launcher Android TV kiểu Apple TV: kính mờ, chuyển động mượt, chữ
   chọn đội yêu thích) và Cài đặt hệ thống. Bấm giữ nút bánh răng để mở thẳng Cài đặt của Google TV.
 - **Gửi ảnh từ điện thoại**: trong Ảnh nền Home hoặc Màn hình chờ, chọn "Thêm ảnh từ điện thoại", quét mã QR
   trên tivi rồi chọn ảnh. Điện thoại phải cùng mạng Wi-Fi với tivi; trang gửi ảnh chỉ mở khi hộp đó đang hiện.
-- Phím Menu mở bảng tất cả ứng dụng.
+- **Ô Apps** cuối dock: bảng tất cả ứng dụng (có Cửa hàng Play). App cài sau nằm ở đây, không tự lên dock. Chọn ô Apps
+  thì hàng bên dưới hiện các app mở gần nhất. Phím Menu cũng mở bảng này.
+- **Game giả lập trong bảng Apps** (nhóm Trò chơi): mỗi game là một cặp file trong
+  `Android/data/vn.glass.home/files/games/` gồm `<tên>.json` (`title`, `pkg` app giả lập, `activity`, `uri` file game,
+  `bg` ảnh nền, `thumbs`) và `<tên>.png` (ảnh ô 464x290). Bấm ô là app giả lập (vd PPSSPP) mở thẳng game.
 
 ## Tải về
 

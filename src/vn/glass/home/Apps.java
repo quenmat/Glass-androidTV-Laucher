@@ -18,10 +18,21 @@ final class Apps {
     static final class App {
         final String key, pkg, label;
         final int color;          // màu nền dự phòng khi app không có ảnh nội dung
+        String cardFile;          // ô game: ảnh ô riêng (trên box), thay cho ảnh trong assets/cards
+        String launchUri, launchActivity;   // ô game: mở thẳng file game bằng app giả lập
+        final List<String> thumbs = new ArrayList<>();   // ô game: ảnh hiện ở hàng nội dung khi đang chọn ô
+        String bgFile;            // ô game: ảnh nền cả màn hình khi đang chọn ô (kiểu PS4)
         App(String key, String pkg, String label, int color) {
             this.key = key; this.pkg = pkg; this.label = label; this.color = color;
         }
-        boolean isSettings() { return pkg == null; }
+        /** Ô "Apps" cuối dock: không phải app, bấm vào mở bảng tất cả ứng dụng. */
+        boolean isAllApps() { return pkg == null; }
+    }
+
+    /** Ô vẽ sẵn (logo đẹp, cùng tông với dock) của một app nếu có: tên ảnh trong assets/cards, không có thì null. */
+    static String cardKey(String pkg) {
+        for (App x : base()) if (x.pkg != null && x.pkg.equals(pkg)) return x.key;
+        return CARD_FOR.get(pkg);
     }
 
     static List<App> base() {
@@ -30,7 +41,6 @@ final class Apps {
         a.add(new App("netflix", "com.netflix.ninja", "Netflix", 0xFF5A0A0E));
         a.add(new App("fptplay", "net.fptplay.ottbox", "FPT Play", 0xFF7A3510));
         a.add(new App("tv360", "com.viettel.tv360.tv", "TV360", 0xFF0B3A66));
-        a.add(new App("play", "com.android.vending", "Cửa hàng Play", 0xFF1E4D3A));
         // VieON vào bảng Tất cả ứng dụng; Cài đặt là nút bánh răng ở góc màn hình; HBO Max đã gỡ
         return a;
     }
@@ -45,10 +55,9 @@ final class Apps {
     }
 
     /**
-     * Dock thật: các app cố định (chỉ app đã cài) + app cài thêm, chen ngay trước Play Store.
-     * Lần chạy đầu: đưa luôn các app TV đang có lên dock (bỏ app hệ thống như Cài đặt, launcher khác), rồi chụp
-     * lại mọi app làm mốc "đã biết"; về sau chỉ app cài SAU mốc đó mới tự lên dock, nên app đã cố ý bỏ khỏi dock
-     * (VieON...) không quay lại. Gỡ app thì ô tự biến mất.
+     * Dock thật: các app cố định (chỉ app đã cài) + app đã có trên dock từ trước, rồi ô "Apps" ở cuối.
+     * Lần chạy đầu: đưa luôn các app TV đang có lên dock (bỏ app hệ thống như Cài đặt, launcher khác).
+     * App cài về sau KHÔNG tự lên dock nữa: nằm trong bảng Apps (cùng Cửa hàng Play). Gỡ app thì ô tự biến mất.
      */
     static List<App> dock(Context ctx) {
         PackageManager pm = ctx.getPackageManager();
@@ -73,20 +82,49 @@ final class Apps {
         String saved = p.getString("extra_pkgs", "");
         if (!saved.isEmpty()) extra.addAll(Arrays.asList(saved.split(",")));
         extra.removeIf(pkg -> !now.contains(pkg));               // đã gỡ
-        List<String> fresh = new ArrayList<>();
-        for (String pkg : now) if (!known.contains(pkg) && !fixed.contains(pkg) && !extra.contains(pkg)) fresh.add(pkg);
-        fresh.sort((x, y) -> Long.compare(installedAt(pm, x), installedAt(pm, y)));
-        extra.addAll(fresh);
+        p.edit().putString("extra_pkgs", String.join(",", extra)).apply();
 
-        // "đã biết" = mốc ban đầu trừ các app đã gỡ: gỡ rồi cài lại thì vẫn tự lên dock
-        Set<String> k = new HashSet<>(known);
-        k.retainAll(now);
-        p.edit().putString("extra_pkgs", String.join(",", extra)).putStringSet("known_pkgs", k).apply();
-
-        int at = a.size();                                          // ngay trước Play Store (nếu có)
-        for (int i = 0; i < a.size(); i++) if ("com.android.vending".equals(a.get(i).pkg)) at = i;
-        for (String pkg : extra) a.add(at++, new App(CARD_FOR.get(pkg), pkg, label(pm, pkg), 0xFF2C2C30));
+        for (String pkg : extra) a.add(new App(CARD_FOR.get(pkg), pkg, label(pm, pkg), 0xFF2C2C30));
+        a.add(new App("apps", null, "Ứng dụng", 0xFF2C2C30));
         return a;
+    }
+
+    /**
+     * Ô game: mỗi game là một cặp file trong Android/data/vn.glass.home/files/games/ do chủ máy tự thêm:
+     * <tên>.json {"title", "pkg" (app giả lập), "activity" (tuỳ chọn), "uri" (file game), "thumbs" (ảnh cho hàng nội
+     * dung, tên file trong cùng thư mục), "bg" (ảnh nền cả màn hình khi chọn ô)} và <tên>.png (ảnh ô 464x290).
+     * Game nằm trong bảng Apps (không lên dock); bấm là app giả lập mở thẳng game. Ảnh và game nằm riêng trên box,
+     * không đóng vào APK.
+     */
+    static List<App> games(Context ctx) { return games(ctx, launchable(ctx.getPackageManager())); }
+
+    private static List<App> games(Context ctx, Set<String> installed) {
+        List<App> out = new ArrayList<>();
+        java.io.File dir = ctx.getExternalFilesDir("games");
+        java.io.File[] fs = dir == null ? null : dir.listFiles(f -> f.getName().endsWith(".json"));
+        if (fs == null) return out;
+        Arrays.sort(fs);
+        for (java.io.File f : fs) {
+            try {
+                org.json.JSONObject o = new org.json.JSONObject(new String(java.nio.file.Files.readAllBytes(f.toPath()), "UTF-8"));
+                String pkg = o.getString("pkg");
+                if (!installed.contains(pkg)) continue;   // chưa cài app giả lập: không hiện ô bấm không chạy
+                App g = new App("game:" + f.getName(), pkg, o.optString("title", pkg), 0xFF2C2C30);
+                java.io.File png = new java.io.File(dir, f.getName().replace(".json", ".png"));
+                if (png.exists()) g.cardFile = png.getPath();
+                g.launchUri = o.getString("uri");
+                g.launchActivity = o.optString("activity", null);
+                java.io.File bg = new java.io.File(dir, o.optString("bg", ""));
+                if (bg.isFile()) g.bgFile = bg.getPath();
+                org.json.JSONArray th = o.optJSONArray("thumbs");
+                for (int i = 0; th != null && i < th.length(); i++) {
+                    java.io.File t = new java.io.File(dir, th.getString(i));
+                    if (t.exists()) g.thumbs.add(t.getPath());
+                }
+                out.add(g);
+            } catch (Exception ignored) {}
+        }
+        return out;
     }
 
     private static String label(PackageManager pm, String pkg) {

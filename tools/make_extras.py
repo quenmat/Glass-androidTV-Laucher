@@ -41,6 +41,32 @@ if __name__ == "__main__":
     card.alpha_composite(gr, ((CW - gr.width) // 2, (CH - gr.height) // 2))
     card.save(os.path.join(ROOT, "assets", "cards", "settings.png"))
 
+    # ô "Apps" cuối dock: biểu tượng nét (tools/logos/apps.png, nét đen trên nền trắng) đổi thành nét trắng trên nền tối
+    apps = rounded(CW, CH, CH * 0.12, (20, 20, 20, 255))
+    src = Image.open(os.path.join(HERE, "logos", "apps.png")).convert("RGBA")
+    # độ đậm nét = độ đục x độ tối (ảnh có thể là nét đen trên nền trong suốt hoặc trên nền trắng)
+    dark = Image.eval(src.convert("L"), lambda v: 255 - v)
+    ink = Image.composite(dark, Image.new("L", src.size, 0), src.getchannel("A"))
+    ink = ink.crop(ink.getbbox())
+    ih = int(CH * 0.30)
+    iw = round(ink.width * ih / ink.height)
+    alpha = ink.resize((iw, ih), Image.LANCZOS)
+    white = Image.new("RGBA", (iw, ih), (255, 255, 255, 235))
+    white.putalpha(alpha.point(lambda v: v * 235 // 255))
+    # chữ "Apps" vừa phải, Inter nét vừa (cùng font giao diện launcher), cao gần bằng biểu tượng
+    fa = ImageFont.truetype(os.path.join(ROOT, "assets", "fonts", "Inter.ttf"), 62)
+    try:
+        fa.set_variation_by_axes([32, 520])
+    except Exception:
+        pass
+    da = ImageDraw.Draw(apps)
+    tw = da.textlength("Apps", font=fa)
+    gap = 26
+    x0 = round((CW - (iw + gap + tw)) / 2)
+    apps.alpha_composite(white, (x0, (CH - ih) // 2))
+    da.text((x0 + iw + gap, CH / 2 + 2), "Apps", font=fa, fill=(255, 255, 255, 235), anchor="lm")
+    apps.save(os.path.join(ROOT, "assets", "cards", "apps.png"))
+
     font = ImageFont.truetype(os.path.join(ROOT, "assets", "fonts", "Inter.ttf"), 44)
     try:
         font.set_variation_by_axes([28, 600])
