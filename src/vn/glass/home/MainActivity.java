@@ -1640,6 +1640,11 @@ public class MainActivity extends Activity {
     }
 
     /** Tối đa 5 app mở gần nhất còn cài trên máy: ảnh là ô vẽ sẵn nếu có, không thì banner TV của app. */
+    private boolean onDock(String pkg) {
+        if (apps != null) for (Apps.App a : apps) if (pkg.equals(a.pkg)) return true;
+        return false;
+    }
+
     private List<Shelf.Item> recentApps() {
         List<Shelf.Item> out = new ArrayList<>();
         PackageManager pm = getPackageManager();
@@ -1659,6 +1664,7 @@ public class MainActivity extends Activity {
                 continue;
             }
             if (pm.getLeanbackLaunchIntentForPackage(pkg) == null && pm.getLaunchIntentForPackage(pkg) == null) continue;
+            if (onDock(pkg)) continue;   // app đã có ô trên dock ngay bên trên: hiện lại ở hàng này thành trùng
             Shelf.Item it = new Shelf.Item();
             it.pkg = pkg;
             try { it.title = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString(); } catch (Exception e) { it.title = pkg; }
@@ -1994,7 +2000,7 @@ public class MainActivity extends Activity {
             for (Apps.App g : games) {
                 FrameLayout tile = gameTile(g);
                 GridLayout.LayoutParams gl = new GridLayout.LayoutParams();
-                gl.width = px(300); gl.height = px(220);
+                gl.width = px(300); gl.height = px(220 + GAME_TILE_H - APP_TILE_H);
                 gl.setMargins(px(10), px(10), px(26), px(26));
                 gg.addView(tile, gl);
                 if (first == null) first = tile;
@@ -2104,47 +2110,73 @@ public class MainActivity extends Activity {
         t.setClipChildren(false);
         ImageView img = new ImageView(this);
         img.setScaleType(ImageView.ScaleType.FIT_XY);
+        // ảnh ô game cùng tỉ lệ 1,6 với ô dock (464x290): giữ nguyên tỉ lệ thì góc bo trong ảnh (12% chiều cao)
+        // không bị kéo méo, quầng sáng vẽ đúng độ bo đó nên ôm khít cả 4 góc
         Bitmap card = g.cardFile == null ? null : BitmapFactory.decodeFile(g.cardFile);
-        if (card != null) img.setImageBitmap(scaleHQ(card, px(300), px(169)));
-        shadowShape(img, px(14));
-        t.addView(img, new FrameLayout.LayoutParams(-1, px(169)));
+        if (card != null) img.setImageBitmap(scaleHQ(card, px(APP_TILE_W), px(GAME_TILE_H)));
+        shadowShape(img, px(GAME_TILE_H * 0.12f));
+        t.addView(img, new FrameLayout.LayoutParams(-1, px(GAME_TILE_H)));
         TextView name = text(500, 22, 0xD9FFFFFF);
         name.setText(g.label);
         name.setSingleLine(true);
         t.addView(name, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
-        View glow = tileGlow(t, img);
-        t.setOnFocusChangeListener((v, has) -> {
-            float s = has ? 1.08f : 1f;
-            img.animate().scaleX(s).scaleY(s).translationZ(has ? px(18) : 0).setDuration(180).start();
-            glow.animate().alpha(has ? 1f : 0f).setDuration(has ? 260 : 160).setInterpolator(EASE).start();
-            if (has) appsBackdrop(g.bgFile);
-        });
+        appsTileFocus(t, img, APP_TILE_W, GAME_TILE_H, GAME_TILE_H * 0.12f, () -> appsBackdrop(g.bgFile));
         t.setOnClickListener(v -> { launchGame(g.pkg, g.launchUri, g.launchActivity, v); rememberGame(g); closeAllApps(); });
         return t;
     }
 
-    private static final int APP_TILE_W = 300, APP_TILE_H = 169, APP_TILE_R = 14, APP_GLOW = 60;
+    private static final int APP_TILE_W = 300, APP_TILE_H = 169, APP_TILE_R = 14, GAME_TILE_H = 188;
+    // ô đang chọn phóng cỡ như dock (300 -> 330, ~110%)
+    private static final float APP_TILE_SCALE = 1.1f;
 
     /**
-     * Quầng sáng của ô trong bảng Apps (cùng kiểu với dock): ôm đúng ô lúc đã phóng 108%, màu theo logo, khoét lỗ
-     * giữa nên không phủ lên ảnh. Ảnh quầng chỉ dựng lúc ô được chọn lần đầu (bảng có nhiều ô, đỡ tốn bộ nhớ).
+     * Hiệu ứng chọn của ô trong bảng Apps, y như ô dock: phóng ~110% có nảy nhẹ, ánh sáng trên mặt ô, quầng sáng
+     * theo màu logo (khoét lỗ đúng hình ô đã phóng, kể cả góc bo) hiện ở mức dịu, đứng yên ~1 s thì sáng hẳn rồi
+     * "thở"; nhấn OK thì ô lún xuống. Ảnh quầng chỉ dựng lúc ô được chọn lần đầu (bảng nhiều ô, đỡ tốn bộ nhớ).
      */
-    private View tileGlow(FrameLayout t, ImageView img) {
-        float sc = 1.08f;
-        int cw = Math.round(px(APP_TILE_W) * sc), ch = Math.round(px(APP_TILE_H) * sc), sp = px(APP_GLOW);
+    private void appsTileFocus(FrameLayout t, ImageView img, int w, int h, float r, Runnable onFocus) {
+        float sc = APP_TILE_SCALE;
+        View sheen = new View(this);
+        GradientDrawable sh = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                new int[]{0x40FFFFFF, 0x0DFFFFFF, 0x00FFFFFF});
+        sh.setCornerRadius(px(r));
+        sheen.setBackground(sh);
+        sheen.setOutlineProvider(null);
+        sheen.setAlpha(0f);
+        t.addView(sheen, new FrameLayout.LayoutParams(-1, px(h)));
+
+        int cw = Math.round(px(w) * sc), ch = Math.round(px(h) * sc), sp = px(GLOW_SPREAD);
         ImageView g = new ImageView(this);
         g.setAlpha(0f);
-        g.setTranslationZ(px(19));   // trên ảnh ô đang nổi (translationZ 18), chỉ lộ phần quanh mép nhờ lỗ khoét
+        g.setTranslationZ(px(32));   // trên ảnh ô đang nổi (translationZ 30), chỉ lộ phần quanh mép nhờ lỗ khoét
         FrameLayout.LayoutParams lg = new FrameLayout.LayoutParams(cw + sp * 2, ch + sp * 2);
-        lg.leftMargin = Math.round(px(APP_TILE_W) / 2f - (cw + sp * 2) / 2f);
-        lg.topMargin = Math.round(px(APP_TILE_H) / 2f - (ch + sp * 2) / 2f);
+        lg.leftMargin = Math.round(px(w) / 2f - (cw + sp * 2) / 2f);
+        lg.topMargin = Math.round(px(h) / 2f - (ch + sp * 2) / 2f);
         t.addView(g, lg);
-        t.getViewTreeObserver().addOnGlobalFocusChangeListener((o, n) -> {
-            if (n != t || g.getDrawable() != null || img.getDrawable() == null) return;
-            Bitmap art = toBitmap(img.getDrawable(), px(APP_TILE_W) / 4, px(APP_TILE_H) / 4);
-            g.setImageBitmap(Glow.make(cw, ch, px(APP_TILE_R) * sc, sp, Glow.dominant(art)));
+
+        t.setOnFocusChangeListener((v, has) -> {
+            if (has && g.getDrawable() == null && img.getDrawable() != null) {
+                Bitmap art = toBitmap(img.getDrawable(), px(w) / 4, px(h) / 4);
+                g.setImageBitmap(Glow.make(cw, ch, px(r) * sc, sp, Glow.dominant(art)));
+            }
+            float s = has ? sc : 1f;
+            android.view.animation.Interpolator in = has ? new OvershootInterpolator(0.8f) : EASE;
+            img.animate().cancel(); sheen.animate().cancel(); g.animate().cancel();
+            img.animate().scaleX(s).scaleY(s).translationZ(has ? px(30) : 0).setInterpolator(in).setDuration(has ? 360 : 420).start();
+            sheen.animate().scaleX(s).scaleY(s).translationZ(has ? px(31) : 0).alpha(has ? 1f : 0f)
+                    .setInterpolator(in).setDuration(has ? 360 : 380).start();
+            if (has) {
+                g.animate().alpha(GLOW_MOVING).setDuration(380).setInterpolator(EASE).withEndAction(() -> startBreathing(g)).start();
+                onFocus.run();
+            } else {
+                if (breathe != null) { breathe.cancel(); breathe = null; }
+                g.animate().alpha(0f).setDuration(200).setInterpolator(EASE).start();
+            }
         });
-        return g;
+        t.setOnKeyListener((v, kc, ev) -> {
+            if (isOk(kc) && ev.getAction() == KeyEvent.ACTION_DOWN && ev.getRepeatCount() == 0) press(img, sheen);
+            return false;
+        });
     }
 
     private FrameLayout appTile(PackageManager pm, ResolveInfo ri) {
@@ -2176,13 +2208,7 @@ public class MainActivity extends Activity {
         FrameLayout.LayoutParams ln = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
         t.addView(name, ln);
         String pkg = ri.activityInfo.packageName;
-        View glow = tileGlow(t, img);
-        t.setOnFocusChangeListener((v, has) -> {
-            float s = has ? 1.08f : 1f;
-            img.animate().scaleX(s).scaleY(s).translationZ(has ? px(18) : 0).setDuration(180).start();
-            glow.animate().alpha(has ? 1f : 0f).setDuration(has ? 260 : 160).setInterpolator(EASE).start();
-            if (has) appsBackdrop(null);
-        });
+        appsTileFocus(t, img, APP_TILE_W, APP_TILE_H, APP_TILE_R, () -> appsBackdrop(null));
         t.setOnClickListener(v -> { launchPkg(pkg, v); closeAllApps(); });
         return t;
     }
