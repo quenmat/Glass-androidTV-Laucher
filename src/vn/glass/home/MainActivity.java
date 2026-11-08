@@ -1572,6 +1572,7 @@ public class MainActivity extends Activity {
      * của Glass Home, nên tạm bỏ chặn đúng lúc gửi lệnh rồi đặt lại.
      */
     private void launchGame(String pkg, String uri, String activity, View src) {
+        if (RETROARCH.equals(pkg) && launchRetroArch(uri, src)) return;
         // kiểu file bắt buộc: bộ lọc mở file của PPSSPP chỉ nhận lệnh có kèm kiểu (bất kỳ)
         Intent i = new Intent(Intent.ACTION_VIEW).setDataAndType(android.net.Uri.parse(uri), "application/octet-stream")
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
@@ -1581,6 +1582,37 @@ public class MainActivity extends Activity {
         try { startActivity(i, zoomFrom(src)); }
         catch (Exception e) { launchPkg(pkg, src); }   // lệnh mở thẳng không được: mở app giả lập như thường
         finally { android.os.StrictMode.setVmPolicy(old); }
+    }
+
+    private static final String RETROARCH = "com.retroarch";
+
+    /**
+     * RetroArch (bản Cửa hàng Play) không nhận lệnh mở file: phải gọi thẳng màn chơi kèm đường dẫn game, core và file
+     * cấu hình. Core đóng sẵn trong app (libsnes9x.so...), thư mục chứa đổi mỗi lần app cập nhật nên hỏi lại lúc mở.
+     * Core chọn theo đuôi file game. Game phải nằm trong thư mục của RetroArch (Android/media/com.retroarch/...).
+     */
+    private boolean launchRetroArch(String uri, View src) {
+        String path = android.net.Uri.parse(uri).getPath();
+        if (path == null) return false;
+        String ext = path.substring(path.lastIndexOf('.') + 1).toLowerCase(java.util.Locale.ROOT);
+        String core;
+        switch (ext) {
+            case "sfc": case "smc": core = "snes9x"; break;
+            case "nes": core = "fceumm"; break;
+            case "gba": core = "mgba"; break;
+            case "gb": case "gbc": core = "gambatte"; break;
+            case "md": case "gen": case "smd": core = "genesis_plus_gx"; break;
+            default: return false;
+        }
+        try {
+            String lib = getPackageManager().getApplicationInfo(RETROARCH, 0).nativeLibraryDir + "/lib" + core + ".so";
+            Intent i = new Intent().setClassName(RETROARCH, "com.retroarch.browser.retroactivity.RetroActivityFuture")
+                    .putExtra("ROM", path).putExtra("LIBRETRO", lib)
+                    .putExtra("CONFIGFILE", "/storage/emulated/0/Android/data/com.retroarch/files/retroarch.cfg")
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            startActivity(i, zoomFrom(src));
+            return true;
+        } catch (Exception e) { return false; }
     }
 
     private void launchPkg(String pkg, View src) {

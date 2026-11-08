@@ -29,6 +29,8 @@ Launcher Android TV kiểu Apple TV: kính mờ, chuyển động mượt, chữ
 - **Game giả lập trong bảng Apps** (nhóm Trò chơi): mỗi game là một cặp file trong
   `Android/data/vn.glass.home/files/games/` gồm `<tên>.json` (`title`, `pkg` app giả lập, `activity`, `uri` file game,
   `bg` ảnh nền, `thumbs`) và `<tên>.png` (ảnh ô 464x290). Bấm ô là app giả lập (vd PPSSPP) mở thẳng game.
+  Với `"pkg": "com.retroarch"` (RetroArch bản Cửa hàng Play), core chọn theo đuôi file (`.sfc`/`.smc` Snes9x,
+  `.nes`, `.gba`, `.gb`, `.md`); file game phải nằm trong `Android/media/com.retroarch/`.
 
 ## Tải về
 
