@@ -437,10 +437,14 @@ final class EplView extends View {
         float center = y - C_MATCH / 2f + 2, base = center + 7;
         float left = C_PAD, cx = CW / 2f;
         if (minuteCol) {
+            // cột phút rộng vừa "90′"; chưa có phút (dữ liệu lúc mới đá) thì chỉ chấm xanh: chữ "Đang đá" đã nằm ở
+            // tiêu đề thẻ, in lại vào cột hẹp này thì lấn sang tên đội
             time.setTextAlign(Paint.Align.LEFT);
             time.setColor(0xFF7FE3A0);
-            c.drawText(minuteOf(m), left, base, time);
-            cx = (left + 40 + CW - C_PAD) / 2f;
+            float col = time.measureText("90′") + 10;
+            if (m.minutes > 0) c.drawText(m.minutes + "′", left, base, time);
+            else c.drawCircle(left + 5, center + 1, 4, dot);
+            cx = (left + col + CW - C_PAD) / 2f;
         }
         String midText = m.started && m.hs >= 0 && m.as >= 0 ? m.hs + " – " + m.as : "–";
         mid.setTextAlign(Paint.Align.CENTER);
