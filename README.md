@@ -20,6 +20,9 @@ Launcher Android TV kiểu Apple TV: kính mờ, chuyển động mượt, chữ
 - **Màn hình chờ** sau 5 phút để yên ở Home: 6 ảnh kèm sẵn hoặc ảnh của bạn (đổi mỗi 15 phút), giờ, ngày dương, ngày âm lịch;
   góc phải xoay vòng đếm lùi tới Tết (từ tháng 9 âm lịch) và giá BTC/ETH. Chữ dời nhẹ mỗi 3 phút để tránh
   lưu ảnh trên màn hình.
+- **Giữ loa ngoài**: soundbar cắm qua ARC thường tự ngủ khi im lặng lâu, tivi lại về loa trong. Không app nào
+  phát tiếng suốt 5 phút (ở Home, màn hình chờ, phim tạm dừng) thì box phát một dải nhiễu cực nhỏ, tai không nghe
+  thấy, để loa còn thấy tín hiệu; có tiếng khác hoặc box tắt màn hình là dừng.
 - **Cài đặt** (nút bánh răng góc trên trái): Ảnh nền Home, Màn hình chờ, Widget (bật/tắt ô giá, lịch bóng đá,
   chọn đội yêu thích) và Cài đặt hệ thống. Bấm giữ nút bánh răng để mở thẳng Cài đặt của Google TV.
 - **Gửi ảnh từ điện thoại**: trong Ảnh nền Home hoặc Màn hình chờ, chọn "Thêm ảnh từ điện thoại", quét mã QR

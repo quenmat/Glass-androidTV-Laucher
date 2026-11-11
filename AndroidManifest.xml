@@ -16,6 +16,9 @@
     <!-- địa chỉ của tivi trong mạng nhà: hiện mã QR để điện thoại gửi ảnh lên -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- dịch vụ nền giữ soundbar không tự ngủ khi im lặng lâu -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
     <application
         android:label="Glass Home"
@@ -51,6 +54,14 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <!-- chạy tiến trình riêng, nhỏ: giữ dịch vụ sống mà không giữ cả launcher (ảnh, bộ nhớ lớn) trong RAM
+             lúc đang xem app khác; hệ thống vẫn dọn được tiến trình launcher khi thiếu RAM -->
+        <service
+            android:name=".KeepAudioService"
+            android:exported="false"
+            android:process=":giuloa"
+            android:foregroundServiceType="mediaPlayback" />
 
         <!-- giữ Glass Home làm màn hình chính trên máy không đặt được bằng máy tính (bật tivi, nút Home) -->
         <service

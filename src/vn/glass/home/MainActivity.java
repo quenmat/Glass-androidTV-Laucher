@@ -176,6 +176,7 @@ public class MainActivity extends Activity {
             ui.postDelayed(eplCycle, eplView.mode() == EplView.TABLE ? EPL_TABLE_MS : EPL_FIXTURES_MS);
         ui.removeCallbacks(bgRotate); ui.postDelayed(bgRotate, bgRotateMs());
         armSaver();   // đứng yên ở màn hình chính 5 phút thì hiện màn hình chờ
+        try { startForegroundService(new Intent(this, KeepAudioService.class)); } catch (Exception ignored) {}   // giữ soundbar thức
         ui.removeCallbacks(showHomePrompt);
         if (needsHomePrompt()) ui.postDelayed(showHomePrompt, 1200);
     }
@@ -2034,7 +2035,9 @@ public class MainActivity extends Activity {
         // cuộn theo ô đang chọn: lên tới hàng đầu của một nhóm thì kéo hết lên để thấy cả tiêu đề nhóm (Trò chơi,
         // Ứng dụng); ô khác thì luôn chừa khoảng thoáng phía trên, không để ô dính sát mép màn hình
         sv.setSmoothScrollingEnabled(true);
-        sv.getViewTreeObserver().addOnGlobalFocusChangeListener((o, n) -> {
+        // nghe ở cửa sổ (root) và gỡ ra khi đóng bảng: để lại thì cửa sổ giữ cả bảng cũ (mọi ảnh ô, quầng sáng)
+        // sau mỗi lần mở, launcher phình thêm ~18MB một lần
+        appsFocusWatch = (o, n) -> {
             if (n == null || !(n.getParent() instanceof GridLayout) || n.getParent().getParent() != col) return;
             View g = (View) n.getParent();
             int idx = col.indexOfChild(g);
@@ -2052,7 +2055,8 @@ public class MainActivity extends Activity {
             }
             int t = Math.max(0, target);
             sv.post(() -> scrollAppsTo(sv, t));
-        });
+        };
+        root.getViewTreeObserver().addOnGlobalFocusChangeListener(appsFocusWatch);
         // nền sau bảng: chọn ô game thì hiện ảnh lớn của game (như PS4), ô khác thì tối như cũ
         appsArt = fullImage();
         appsArt.setAlpha(0f);
@@ -2072,6 +2076,7 @@ public class MainActivity extends Activity {
     }
 
     private ValueAnimator appsScroll;
+    private android.view.ViewTreeObserver.OnGlobalFocusChangeListener appsFocusWatch;
 
     /** Cuộn bảng Apps mềm (cùng đường cong EASE với mọi chuyển động của launcher), cuộn tiếp từ vị trí đang dở. */
     private void scrollAppsTo(ScrollView sv, int y) {
@@ -2217,6 +2222,9 @@ public class MainActivity extends Activity {
         if (allApps == null) return;
         View a = allApps;
         allApps = null;
+        if (appsFocusWatch != null) { root.getViewTreeObserver().removeOnGlobalFocusChangeListener(appsFocusWatch); appsFocusWatch = null; }
+        if (appsScroll != null) { appsScroll.cancel(); appsScroll = null; }
+        appsArt = null; appsArtFor = null;
         a.animate().alpha(0f).setDuration(160).withEndAction(() -> root.removeView(a)).start();
         tray.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
         shelfRow.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
