@@ -22,6 +22,7 @@ final class Apps {
         String launchUri, launchActivity;   // ô game: mở thẳng file game bằng app giả lập
         final List<String> thumbs = new ArrayList<>();   // ô game: ảnh hiện ở hàng nội dung khi đang chọn ô
         String bgFile;            // ô game: ảnh nền cả màn hình khi đang chọn ô (kiểu PS4)
+        boolean tv;               // ô Truyền hình: hàng là các kênh, bấm mở bảng kênh (xem Tv)
         App(String key, String pkg, String label, int color) {
             this.key = key; this.pkg = pkg; this.label = label; this.color = color;
         }
@@ -85,6 +86,13 @@ final class Apps {
         p.edit().putString("extra_pkgs", String.join(",", extra)).apply();
 
         for (String pkg : extra) a.add(new App(CARD_FOR.get(pkg), pkg, label(pm, pkg), 0xFF2C2C30));
+        // Truyền hình (IPTV, phát bằng Just Player hoặc VLC): có trình phát và danh sách kênh thì ô nằm trước ô Apps
+        if (Tv.available(ctx, now)) {
+            String player = Tv.player(now)[0];
+            App t = new App("tv", player, "Truyền hình", 0xFF181616);
+            t.tv = true;
+            a.add(t);
+        }
         a.add(new App("apps", null, "Ứng dụng", 0xFF2C2C30));
         return a;
     }

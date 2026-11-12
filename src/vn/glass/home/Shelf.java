@@ -26,6 +26,7 @@ final class Shelf {
         long engaged;
         boolean continueWatching;
         String gameUri, gameActivity;   // ảnh của ô game: bấm vào là mở thẳng game
+        String tvChannel;               // ô kênh truyền hình: bấm vào là trình phát mở kênh này
     }
 
     private static final String WATCH_NEXT = "content://android.media.tv/watch_next_program";

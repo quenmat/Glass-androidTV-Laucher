@@ -99,9 +99,38 @@ public class MainActivity extends Activity {
     private int focused;
     private boolean inShelf;
 
+    /**
+     * Chỉ một bản launcher được sống. Mở bằng lệnh thường (không phải nút Home: lệnh từ app khác, từ máy tính) thì
+     * Android dựng thêm một bản trong task riêng, giữ thêm cả giao diện lẫn ảnh, box 2GB tốn gấp đôi RAM.
+     * Bản mới không phải từ nút Home mà đã có bản đang sống: chuyển lệnh sang bản đó (qua nút Home) rồi tự đóng.
+     * Bản mới từ nút Home: đóng bản lạc cũ, giữ bản này.
+     */
+    private static java.lang.ref.WeakReference<MainActivity> live;
+    private static final String FWD_ACTION = "glass_act";
+
+    private boolean singleInstance() {
+        MainActivity old = live == null ? null : live.get();
+        boolean home = getIntent() != null && getIntent().hasCategory(Intent.CATEGORY_HOME);
+        if (old != null && old != this && !old.isFinishing() && old.getTaskId() != getTaskId()) {
+            if (!home) {
+                Intent i = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).setPackage(getPackageName())
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                if (getIntent() != null && getIntent().getAction() != null) i.putExtra(FWD_ACTION, getIntent().getAction());
+                if (getIntent() != null && getIntent().getExtras() != null) i.putExtras(getIntent().getExtras());
+                startActivity(i);
+                finishAndRemoveTask();
+                return false;
+            }
+            old.finishAndRemoveTask();
+        }
+        live = new java.lang.ref.WeakReference<>(this);
+        return true;
+    }
+
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        if (!singleInstance()) return;
         k = getResources().getDisplayMetrics().widthPixels / 1920f;
         images = new Images(this);
         // font cho tiêu đề hàng (2 phần cùng cỡ 30): đúng opsz của cỡ đó
@@ -137,6 +166,8 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (root == null) { super.onDestroy(); return; }   // bản thừa tự đóng ngay trong onCreate: chưa dựng gì
+        if (live != null && live.get() == this) live = null;
         watchTvProvider(false);
         watchNetwork(false);
         bg.shutdownNow();
@@ -210,7 +241,8 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         // nút Home khi đang ở launcher: đóng mọi lớp phủ, về dock
-        String act = intent.getAction();
+        // lệnh chuyển từ một bản launcher thừa (xem singleInstance): dùng đúng lệnh gốc
+        String act = intent.getStringExtra(FWD_ACTION) != null ? intent.getStringExtra(FWD_ACTION) : intent.getAction();
         // xem trước màn hình chờ từ máy tính (am start -a vn.glass.home.SAVER -n vn.glass.home/.MainActivity)
         if ("vn.glass.home.SAVER".equals(act)) { ui.post(this::showSaver); return; }
         // xem thử lịch thi đấu khi có trận đang đá / đã xong (am start -a vn.glass.home.EPL_DEMO ...), 1 phút rồi về thật
@@ -1208,7 +1240,7 @@ public class MainActivity extends Activity {
         CharSequence head;
         if (items.isEmpty()) head = "";
         else if (a.isAllApps()) head = heading("Mở gần đây", null);
-        else if (a.launchUri != null) head = heading(a.label, null);
+        else if (a.launchUri != null || a.tv) head = heading(a.label, null);
         else if (mixed || own.isEmpty()) head = heading("Xem tiếp", null);
         else head = heading(own.get(0).continueWatching ? "Đang xem dở" : "Gợi ý", a.label);
         rowItems = items;
@@ -1234,9 +1266,9 @@ public class MainActivity extends Activity {
             // ảnh của Netflix đã in sẵn chữ N đỏ ở góc: không dán logo app đè lên, giữ chữ N gốc
             boolean branded = "com.netflix.ninja".equals(it.pkg);
             // iQIYI: ảnh không có logo của app, nên luôn gắn logo nhỏ ở góc trên trái (như chữ N trên ảnh Netflix)
-            Bitmap mark = a.isAllApps() || a.launchUri != null ? null : markFor(it.pkg);   // logo nhỏ không khung (iQIYI): luôn gắn, kể cả hàng của chính app
+            Bitmap mark = a.isAllApps() || a.launchUri != null || a.tv ? null : markFor(it.pkg);   // logo nhỏ không khung (iQIYI): luôn gắn, kể cả hàng của chính app
             // hàng "Mở gần đây": bản thân ô đã là logo app, không gắn thêm
-            Bitmap bb = mark != null ? mark : (mixed || own.isEmpty()) && !branded && !a.isAllApps() && a.launchUri == null ? badgeFor(it.pkg) : null;
+            Bitmap bb = mark != null ? mark : (mixed || own.isEmpty()) && !branded && !a.isAllApps() && a.launchUri == null && !a.tv ? badgeFor(it.pkg) : null;
             badge.setVisibility(bb == null ? View.GONE : View.VISIBLE);
             if (bb != null) {
                 badge.setImageBitmap(bb);
@@ -1540,6 +1572,18 @@ public class MainActivity extends Activity {
 
     private List<Shelf.Item> itemsOf(Apps.App a) {
         if (a.isAllApps()) return recentApps();   // ô Apps: hàng là các app mở gần nhất
+        if (a.tv) {
+            // ô Truyền hình: kênh xem gần đây trước rồi các kênh đầu danh sách; ảnh kênh đã có tên kênh nên không ghi thêm chữ
+            List<Shelf.Item> out = new ArrayList<>();
+            for (Tv.Channel ch : Tv.recentFirst(this, Tv.load(this), SHELF_N)) {
+                Shelf.Item it = new Shelf.Item();
+                it.pkg = a.pkg;
+                it.art = ch.art == null ? null : android.net.Uri.fromFile(new File(ch.art)).toString();
+                it.tvChannel = ch.name;
+                out.add(it);
+            }
+            return out;
+        }
         if (a.launchUri != null) {
             // ô game: ảnh bìa và ảnh lúc đang chơi; bấm ảnh nào cũng vào thẳng game
             List<Shelf.Item> out = new ArrayList<>();
@@ -1562,6 +1606,7 @@ public class MainActivity extends Activity {
     private void launch(Apps.App a, View src) {
         try {
             if (a.isAllApps()) { openAllApps(); return; }   // ô Apps: bảng tất cả ứng dụng (có Cửa hàng Play)
+            if (a.tv) { openPanel(true); return; }           // ô Truyền hình: bảng kênh, cùng kiểu bảng Apps
             if (a.launchUri != null) { launchGame(a.pkg, a.launchUri, a.launchActivity, src); return; }
             launchPkg(a.pkg, src);
         } catch (Exception ignored) {}
@@ -1681,6 +1726,7 @@ public class MainActivity extends Activity {
         List<Shelf.Item> items = rowItems;
         if (i >= items.size()) return;
         Shelf.Item it = items.get(i);
+        if (it.tvChannel != null) { playChannel(Tv.find(this, it.tvChannel), src); return; }
         if (it.gameUri != null) {
             launchGame(it.pkg, it.gameUri, it.gameActivity, src);
             for (Apps.App g : Apps.games(this)) if (it.gameUri.equals(g.launchUri)) rememberGame(g);
@@ -1968,7 +2014,10 @@ public class MainActivity extends Activity {
 
     // ---------- tất cả ứng dụng ----------
 
-    private void openAllApps() {
+    private void openAllApps() { openPanel(false); }
+
+    /** Bảng phủ cả màn hình: tv = bảng kênh truyền hình (nhóm theo group-title), không thì bảng Trò chơi + Ứng dụng. */
+    private void openPanel(boolean tv) {
         if (allApps != null) return;
         allApps = new FrameLayout(this);
         allApps.setBackgroundColor(0xF0050507);
@@ -1986,7 +2035,8 @@ public class MainActivity extends Activity {
         col.setClipChildren(false);
         col.setClipToPadding(false);   // quầng sáng của ô cột trái tràn vào lề trái, không bị cắt
         View first = null;
-        List<Apps.App> games = Apps.games(this);
+        if (tv) first = fillChannels(col);
+        List<Apps.App> games = tv ? Collections.emptyList() : Apps.games(this);
         if (!games.isEmpty()) {
             TextView gh = text(600, 40, 0xFFFFFFFF);
             gh.setText("Trò chơi");
@@ -2007,6 +2057,13 @@ public class MainActivity extends Activity {
                 if (first == null) first = tile;
             }
         }
+        if (!tv) first = fillAppsGrid(col, first);
+        sv.addView(col);
+        finishPanel(sv, col, first);
+    }
+
+    /** Phần "Ứng dụng" của bảng Apps: mọi app có giao diện TV, xếp theo tên. */
+    private View fillAppsGrid(LinearLayout col, View first) {
         TextView h = text(600, 40, 0xFFFFFFFF);
         h.setText("Ứng dụng");
         col.addView(h);
@@ -2031,7 +2088,10 @@ public class MainActivity extends Activity {
             grid.addView(tile, gl);
             if (first == null) first = tile;
         }
-        sv.addView(col);
+        return first;
+    }
+
+    private void finishPanel(ScrollView sv, LinearLayout col, View first) {
         // cuộn theo ô đang chọn: lên tới hàng đầu của một nhóm thì kéo hết lên để thấy cả tiêu đề nhóm (Trò chơi,
         // Ứng dụng); ô khác thì luôn chừa khoảng thoáng phía trên, không để ô dính sát mép màn hình
         sv.setSmoothScrollingEnabled(true);
@@ -2128,6 +2188,74 @@ public class MainActivity extends Activity {
         appsTileFocus(t, img, APP_TILE_W, GAME_TILE_H, GAME_TILE_H * 0.12f, () -> appsBackdrop(g.bgFile));
         t.setOnClickListener(v -> { launchGame(g.pkg, g.launchUri, g.launchActivity, v); rememberGame(g); closeAllApps(); });
         return t;
+    }
+
+    // ô kênh nhỏ hơn ô app (6 cột), không ghi tên dưới ô (logo đã là tên kênh): cả danh sách gọn trong khoảng một màn hình
+    private static final int CH_TILE_W = 250, CH_TILE_H = 141, CH_TILE_R = 12;
+
+    /** Kênh thuộc nhóm nào trên bảng: chỉ tách "Quốc tế", còn lại gộp "Trong nước" cho đỡ nhiều tiêu đề. */
+    private static String panelGroup(String g) { return "Quốc tế".equals(g) ? "Quốc tế" : "Trong nước"; }
+
+    /** Bảng kênh: hai nhóm (Trong nước, Quốc tế), mỗi nhóm một tiêu đề + lưới 6 cột ô kênh 16:9; trả về ô đầu tiên. */
+    private View fillChannels(LinearLayout col) {
+        View first = null, last = null;
+        String lastName = Tv.lastWatched(this);
+        Map<String, GridLayout> groups = new java.util.LinkedHashMap<>();
+        for (Tv.Channel ch : Tv.load(this)) {
+            String g = panelGroup(ch.group);
+            GridLayout grid = groups.get(g);
+            if (grid == null) {
+                TextView h = text(600, 40, 0xFFFFFFFF);
+                h.setText(g);
+                col.addView(h);
+                grid = new GridLayout(this);
+                grid.setColumnCount(6);
+                grid.setClipChildren(false);
+                LinearLayout.LayoutParams lg = new LinearLayout.LayoutParams(-2, -2);
+                lg.topMargin = px(30);
+                lg.bottomMargin = px(24);
+                col.addView(grid, lg);
+                groups.put(g, grid);
+            }
+            FrameLayout tile = channelTile(ch);
+            GridLayout.LayoutParams gl = new GridLayout.LayoutParams();
+            gl.width = px(CH_TILE_W); gl.height = px(CH_TILE_H);
+            gl.setMargins(px(10), px(10), px(18), px(22));
+            grid.addView(tile, gl);
+            if (first == null) first = tile;
+            if (ch.name.equals(lastName)) last = tile;
+        }
+        return last != null ? last : first;   // chọn sẵn kênh vừa xem
+    }
+
+    /** Ô kênh trong bảng kênh: ảnh logo kênh 16:9, không ghi tên; bấm là trình phát mở kênh. */
+    private FrameLayout channelTile(Tv.Channel ch) {
+        FrameLayout t = new FrameLayout(this);
+        t.setFocusable(true);
+        t.setClipChildren(false);
+        ImageView img = new ImageView(this);
+        img.setScaleType(ImageView.ScaleType.FIT_XY);
+        GradientDrawable ph = new GradientDrawable();
+        ph.setColor(0x33FFFFFF);
+        ph.setCornerRadius(px(CH_TILE_R));
+        img.setBackground(ph);
+        img.setContentDescription(ch.name);
+        Bitmap art = ch.art == null ? null : BitmapFactory.decodeFile(ch.art);
+        if (art != null) img.setImageDrawable(new RoundImage(scaleHQ(art, px(CH_TILE_W), px(CH_TILE_H)), px(CH_TILE_R)));
+        shadowShape(img, px(CH_TILE_R));
+        t.addView(img, new FrameLayout.LayoutParams(-1, px(CH_TILE_H)));
+        appsTileFocus(t, img, CH_TILE_W, CH_TILE_H, CH_TILE_R, () -> appsBackdrop(null));
+        t.setOnClickListener(v -> playChannel(ch, v));
+        return t;
+    }
+
+    /**
+     * Trình phát mở kênh. Bảng kênh để nguyên phía sau: bấm Back là về đúng bảng, đúng ô vừa chọn
+     * (ô đó cũng được chọn sẵn lần mở bảng sau).
+     */
+    private void playChannel(Tv.Channel ch, View src) {
+        if (!Tv.play(this, ch, zoomFrom(src)))
+            android.widget.Toast.makeText(this, "Chưa mở được " + (ch == null ? "kênh" : ch.name), android.widget.Toast.LENGTH_SHORT).show();
     }
 
     private static final int APP_TILE_W = 300, APP_TILE_H = 169, APP_TILE_R = 14, GAME_TILE_H = 188;
