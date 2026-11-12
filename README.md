@@ -34,6 +34,11 @@ Launcher Android TV kiểu Apple TV: kính mờ, chuyển động mượt, chữ
   `bg` ảnh nền, `thumbs`) và `<tên>.png` (ảnh ô 464x290). Bấm ô là app giả lập (vd PPSSPP) mở thẳng game.
   Với `"pkg": "com.retroarch"` (RetroArch bản Cửa hàng Play), core chọn theo đuôi file (`.sfc`/`.smc` Snes9x,
   `.nes`, `.gba`, `.gb`, `.md`); file game phải nằm trong `Android/media/com.retroarch/`.
+- **Ô Truyền hình** (trước ô Apps): hiện khi có trình phát ([Just Player](https://play.google.com/store/apps/details?id=com.brouken.player),
+  không có thì VLC) và danh sách kênh `Android/data/vn.glass.home/files/tv/kenh.m3u` (kèm ảnh kênh `<tên-không-dấu>.png`).
+  Chọn ô thì hàng bên dưới hiện kênh xem gần đây; bấm vào mở bảng kênh (Trong nước, Quốc tế). Bấm kênh là trình phát mở
+  thẳng luồng, bấm Back về lại bảng. Danh sách kênh do chủ máy tự đặt (luồng IPTV của nhà mạng chỉ xem được trong mạng
+  nhà), không kèm trong repo; ảnh kênh dựng bằng `python tools/make_tv.py <kenh.m3u> <thư mục ra> [thư mục logo]`.
 
 ## Tải về
 
