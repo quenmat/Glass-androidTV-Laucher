@@ -193,6 +193,11 @@ public class MainActivity extends Activity {
         // quay về từ nội dung đang xem: về dock gọn gàng (hàng có thể đã đổi)
         if (inShelf) exitShelf();
         refreshShelf();
+        if (allApps != null) {
+            // quay về từ app khác (trình phát) với bảng đang mở: ô đang chọn về đúng cỡ chọn + quầng sáng
+            View f = allApps.findFocus();
+            if (f != null && f.getOnFocusChangeListener() != null) f.getOnFocusChangeListener().onFocusChange(f, true);
+        }
         if (allApps == null) {
             FrameLayout c = cards.get(focused);
             if (c.hasFocus()) { if (glowCur >= 0) startBreathing(glowViews[glowCur]); }
@@ -207,6 +212,8 @@ public class MainActivity extends Activity {
             ui.postDelayed(eplCycle, eplView.mode() == EplView.TABLE ? EPL_TABLE_MS : EPL_FIXTURES_MS);
         ui.removeCallbacks(bgRotate); ui.postDelayed(bgRotate, bgRotateMs());
         armSaver();   // đứng yên ở màn hình chính 5 phút thì hiện màn hình chờ
+        // lịch phát sóng sẵn trong bộ nhớ trước khi mở bảng kênh; cũ thì tải lại ở nền
+        for (Apps.App a : apps) if (a.tv) { bg.execute(() -> { Epg.load(this); Epg.refreshIfStale(this); }); break; }
         try { startForegroundService(new Intent(this, KeepAudioService.class)); } catch (Exception ignored) {}   // giữ soundbar thức
         ui.removeCallbacks(showHomePrompt);
         if (needsHomePrompt()) ui.postDelayed(showHomePrompt, 1200);
@@ -2125,17 +2132,43 @@ public class MainActivity extends Activity {
         shade.setBackgroundColor(0x8C050507);
         allApps.addView(shade, new FrameLayout.LayoutParams(-1, -1));
         allApps.addView(sv, new FrameLayout.LayoutParams(-1, -1));
+        if (chCard != null) {   // bảng kênh: ô thông tin đứng yên bên phải, không cuộn theo lưới
+            FrameLayout.LayoutParams lc = new FrameLayout.LayoutParams(px(CH_CARD_W), -2, Gravity.TOP | Gravity.END);
+            lc.topMargin = px(120);
+            lc.rightMargin = px(100);
+            allApps.addView(chCard, lc);
+            ui.removeCallbacks(chTick);
+            ui.postDelayed(chTick, 30_000);
+        }
         root.addView(allApps, new FrameLayout.LayoutParams(-1, -1));
         // khoá dock + hàng nội dung phía sau để con trỏ không lọt ra ngoài bảng; tắt quầng "thở"
         tray.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         shelfRow.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         gear.setFocusable(false);
         dimGlow(true);
-        allApps.animate().alpha(1f).setDuration(220).start();
-        if (first != null) first.requestFocus();
+        // bảng đã che kín: tạm ẩn màn Home bên dưới (ảnh nền, kính, dock) để mỗi khung khỏi vẽ thừa cả màn phía sau
+        View panel = allApps;
+        allApps.animate().alpha(1f).setDuration(220).withEndAction(() -> {
+            if (allApps != panel) return;
+            for (int i = 0; i < root.getChildCount(); i++) {
+                View c = root.getChildAt(i);
+                if (c != panel && c.getVisibility() == View.VISIBLE) { c.setVisibility(View.INVISIBLE); hiddenUnderPanel.add(c); }
+            }
+        }).start();
+        if (first != null) {
+            first.requestFocus();
+            // ô chọn sẵn (kênh vừa xem) có thể nằm sâu bên dưới: khi lưới đã đo xong vị trí thì nhảy thẳng tới đó
+            View f0 = first;
+            sv.post(() -> {
+                if (appsFocusWatch == null || !f0.hasFocus()) return;
+                appsFocusWatch.onGlobalFocusChanged(null, f0);
+                if (appsScroll != null) appsScroll.end();
+            });
+        }
     }
 
     private ValueAnimator appsScroll;
+    private final List<View> hiddenUnderPanel = new ArrayList<>();
     private android.view.ViewTreeObserver.OnGlobalFocusChangeListener appsFocusWatch;
 
     /** Cuộn bảng Apps mềm (cùng đường cong EASE với mọi chuyển động của launcher), cuộn tiếp từ vị trí đang dở. */
@@ -2190,13 +2223,13 @@ public class MainActivity extends Activity {
         return t;
     }
 
-    // ô kênh nhỏ hơn ô app (6 cột), không ghi tên dưới ô (logo đã là tên kênh): cả danh sách gọn trong khoảng một màn hình
-    private static final int CH_TILE_W = 250, CH_TILE_H = 141, CH_TILE_R = 12;
+    // ô kênh nhỏ hơn ô app, không ghi tên dưới ô (logo đã là tên kênh); 4 cột bên trái, bên phải là ô thông tin kênh
+    private static final int CH_TILE_W = 250, CH_TILE_H = 141, CH_TILE_R = 12, CH_COLS = 4, CH_CARD_W = 540;
 
-    /** Kênh thuộc nhóm nào trên bảng: chỉ tách "Quốc tế", còn lại gộp "Trong nước" cho đỡ nhiều tiêu đề. */
-    private static String panelGroup(String g) { return "Quốc tế".equals(g) ? "Quốc tế" : "Trong nước"; }
+    /** Nhóm trên bảng kênh: đúng group-title trong kenh.m3u (Quốc gia, HTV, Địa phương, Quốc tế...), thiếu thì "Kênh". */
+    private static String panelGroup(String g) { return g == null || g.isEmpty() ? "Kênh" : g; }
 
-    /** Bảng kênh: hai nhóm (Trong nước, Quốc tế), mỗi nhóm một tiêu đề + lưới 6 cột ô kênh 16:9; trả về ô đầu tiên. */
+    /** Bảng kênh: mỗi nhóm một tiêu đề + lưới 6 cột ô kênh 16:9, nhóm theo thứ tự trong danh sách; trả về ô cần chọn sẵn. */
     private View fillChannels(LinearLayout col) {
         View first = null, last = null;
         String lastName = Tv.lastWatched(this);
@@ -2209,7 +2242,7 @@ public class MainActivity extends Activity {
                 h.setText(g);
                 col.addView(h);
                 grid = new GridLayout(this);
-                grid.setColumnCount(6);
+                grid.setColumnCount(CH_COLS);
                 grid.setClipChildren(false);
                 LinearLayout.LayoutParams lg = new LinearLayout.LayoutParams(-2, -2);
                 lg.topMargin = px(30);
@@ -2225,7 +2258,231 @@ public class MainActivity extends Activity {
             if (first == null) first = tile;
             if (ch.name.equals(lastName)) last = tile;
         }
+        buildChannelCard();
         return last != null ? last : first;   // chọn sẵn kênh vừa xem
+    }
+
+    // ---------- ô thông tin kênh (bên phải bảng kênh) ----------
+    // Chọn ô kênh nào thì hiện ngay: ảnh kênh, chương trình đang chiếu (giờ bắt đầu, kết thúc, thanh tiến độ, còn bao lâu),
+    // chương trình kế tiếp. Lịch đọc từ bộ nhớ (Epg), không chờ mạng; ảnh kênh nạp qua bộ đệm ảnh. Ô đứng yên khi cuộn.
+
+    private LinearLayout chCard;
+    private ImageView chArt;
+    private TextView chName, chDesc, chNowTitle, chNowDesc, chNowTime, chClock, chNextHead, chNextTitle;
+    private View chBarFill, chBarRest, chBarRow, chDivider;
+    private Tv.Channel chShown;
+    private final Runnable chTick = new Runnable() {
+        @Override public void run() {
+            if (chCard == null) return;
+            if (chShown != null) fillChannelCard(chShown);
+            ui.postDelayed(this, 30_000);
+        }
+    };
+
+    /**
+     * Bố cục: ảnh kênh (nhãn TRỰC TIẾP ở góc), tên kênh đậm, tên chương trình lớn, giờ chiếu, thanh tiến độ màu kênh kèm
+     * "giờ hiện tại / giờ kết thúc", đường kẻ mảnh, "Tiếp theo, giờ" chữ nhỏ mờ rồi tên chương trình kế chữ đậm.
+     */
+    private void buildChannelCard() {
+        int inner = CH_CARD_W - 64;
+        chCard = new LinearLayout(this);
+        chCard.setOrientation(LinearLayout.VERTICAL);
+        chCard.setPadding(px(32), px(32), px(32), px(34));
+        GradientDrawable bgd = new GradientDrawable();
+        bgd.setColor(0x24FFFFFF);
+        bgd.setCornerRadius(px(24));
+        bgd.setStroke(px(1), 0x2EFFFFFF);
+        chCard.setBackground(bgd);
+        FrameLayout artBox = new FrameLayout(this);
+        chArt = new ImageView(this);
+        chArt.setScaleType(ImageView.ScaleType.FIT_XY);
+        artBox.addView(chArt, new FrameLayout.LayoutParams(-1, -1));
+        TextView live = text(700, 17, 0xFFFFFFFF);
+        live.setText("TRỰC TIẾP");
+        live.setIncludeFontPadding(true);   // Ự, Ế in hoa: giữ dấu trên cùng
+        live.setLetterSpacing(0.06f);
+        live.setPadding(px(14), px(4), px(14), px(5));
+        GradientDrawable pill = new GradientDrawable();
+        pill.setColor(0xE62E7D32);
+        pill.setCornerRadius(px(20));
+        live.setBackground(pill);
+        FrameLayout.LayoutParams ll = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END);
+        ll.topMargin = px(14); ll.rightMargin = px(14);
+        artBox.addView(live, ll);
+        chCard.addView(artBox, new LinearLayout.LayoutParams(px(inner), Math.round(px(inner) * 9f / 16f)));
+        chName = text(700, 38, 0xFFFFFFFF);
+        chName.setSingleLine(true);
+        chName.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        chCard.addView(chName, lp(-1, -2, 24));
+        chDesc = text(400, 21, 0x99FFFFFF);   // một dòng mô tả kênh, mờ, dưới tên
+        chDesc.setMaxLines(2);
+        chDesc.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        chCard.addView(chDesc, lp(-1, -2, 4));
+        chNowTitle = text(600, 30, 0xFFFFFFFF);
+        chNowTitle.setMaxLines(2);
+        chNowTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        chCard.addView(chNowTitle, lp(-1, -2, 18));
+        chNowDesc = text(400, 21, 0xB3FFFFFF);   // tóm tắt chương trình, chỉ khi nguồn lịch có
+        chNowDesc.setMaxLines(2);
+        chNowDesc.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        chCard.addView(chNowDesc, lp(-1, -2, 6));
+        chNowTime = text(500, 24, 0xCCFFFFFF);
+        chCard.addView(chNowTime, lp(-2, -2, 8));
+        // thanh tiến độ (chia theo trọng số, khỏi đo bề ngang) + "20:26 / 20:45" bên phải
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout track = new LinearLayout(this);
+        track.setOrientation(LinearLayout.HORIZONTAL);
+        GradientDrawable tr = new GradientDrawable();
+        tr.setColor(0x33FFFFFF);
+        tr.setCornerRadius(px(4));
+        track.setBackground(tr);
+        chBarFill = new View(this);
+        chBarFill.setBackground(barFill(0xFF4DD0E1));
+        chBarRest = new View(this);
+        track.addView(chBarFill, new LinearLayout.LayoutParams(0, -1, 0f));
+        track.addView(chBarRest, new LinearLayout.LayoutParams(0, -1, 1f));
+        row.addView(track, new LinearLayout.LayoutParams(0, px(8), 1f));
+        chClock = text(500, 22, 0xD9FFFFFF);
+        LinearLayout.LayoutParams lc = new LinearLayout.LayoutParams(-2, -2);
+        lc.leftMargin = px(18);
+        row.addView(chClock, lc);
+        chBarRow = row;
+        chCard.addView(row, lp(-1, -2, 16));
+        chDivider = new View(this);
+        chDivider.setBackgroundColor(0x26FFFFFF);
+        chCard.addView(chDivider, lp(-1, px(1), 26));
+        chNextHead = text(500, 21, 0x99FFFFFF);
+        chCard.addView(chNextHead, lp(-2, -2, 20));
+        chNextTitle = text(600, 27, 0xF2FFFFFF);
+        chNextTitle.setMaxLines(2);
+        chNextTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        chCard.addView(chNextTitle, lp(-1, -2, 6));
+        // lịch chưa nạp vào bộ nhớ: nạp ở nền rồi vẽ lại; lịch cũ thì tải lại ở nền
+        bg.execute(() -> {
+            if (Epg.cached() == null) { Epg.load(this); ui.post(this::redrawChannelCard); }
+            if (Epg.refreshIfStale(this)) ui.post(this::redrawChannelCard);
+        });
+    }
+
+    private LinearLayout.LayoutParams lp(int w, int h, int top) {
+        LinearLayout.LayoutParams l = new LinearLayout.LayoutParams(w, h);
+        l.topMargin = px(top);
+        return l;
+    }
+
+    // nền sau bảng kênh ánh theo màu kênh đang chọn: ảnh ô kênh thu nhỏ, nhoè (FrostView.blur) phủ cả màn, chuyển màu mềm
+    private final android.util.LruCache<String, Bitmap> chGlow = new android.util.LruCache<>(24);
+
+    private void channelBackdrop(Tv.Channel ch) {
+        if (appsArt == null || ch.art == null) return;
+        String key = "ch:" + ch.art;
+        if (key.equals(appsArtFor)) return;
+        appsArtFor = key;
+        Bitmap b = chGlow.get(ch.art);
+        if (b == null) {
+            BitmapFactory.Options o = new BitmapFactory.Options();
+            o.inSampleSize = 4;   // ảnh 640x360 -> 160x90 rồi nhoè còn vài chục điểm ảnh: rẻ, làm ngay được
+            Bitmap small = BitmapFactory.decodeFile(ch.art, o);
+            if (small == null) return;
+            b = FrostView.blur(small);
+            chGlow.put(ch.art, b);
+        }
+        android.graphics.drawable.Drawable now = new android.graphics.drawable.BitmapDrawable(getResources(), b);
+        android.graphics.drawable.Drawable prev = appsArt.getDrawable();
+        if (prev == null || appsArt.getAlpha() < 0.05f) {
+            appsArt.setImageDrawable(now);
+        } else {
+            android.graphics.drawable.TransitionDrawable td = new android.graphics.drawable.TransitionDrawable(
+                    new android.graphics.drawable.Drawable[]{prev, now});
+            td.setCrossFadeEnabled(true);
+            appsArt.setImageDrawable(td);
+            td.startTransition(260);
+        }
+        appsArt.animate().cancel();
+        appsArt.animate().alpha(0.6f).setDuration(320).setInterpolator(EASE).start();
+    }
+
+    private void redrawChannelCard() { if (chShown != null && chCard != null) fillChannelCard(chShown); }
+
+    /** Thanh tiến độ chuyển sắc theo màu kênh: đậm bên trái, sáng dần về đầu thanh. */
+    private GradientDrawable barFill(int c) {
+        float[] hsv = new float[3];
+        Color.colorToHSV(c, hsv);
+        float[] a = {hsv[0], Math.min(1f, hsv[1] * 1.1f), Math.max(0.75f, hsv[2])};
+        float[] b = {hsv[0], hsv[1] * 0.55f, 1f};
+        GradientDrawable g = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{Color.HSVToColor(a), Color.HSVToColor(b)});
+        g.setCornerRadius(px(3));
+        return g;
+    }
+
+    // màu nhấn của kênh (lấy từ ảnh nhoè đã có trong chGlow); kênh nền trắng/xám thì dùng xanh ngọc cho khỏi nhạt
+    private final Map<String, Integer> chAccent = new java.util.HashMap<>();
+
+    private int channelAccent(Tv.Channel ch) {
+        Integer c = chAccent.get(ch.art);
+        if (c != null) return c;
+        Bitmap b = chGlow.get(ch.art);
+        int col = b == null ? 0xFF4DD0E1 : Glow.dominant(b);
+        float[] hsv = new float[3];
+        Color.colorToHSV(col, hsv);
+        if (hsv[1] < 0.28f) col = 0xFF4DD0E1;
+        chAccent.put(ch.art, col);
+        return col;
+    }
+
+    private void showChannelInfo(Tv.Channel ch) {
+        if (chCard == null) return;
+        boolean changed = chShown != ch;
+        chShown = ch;
+        if (changed && ch.art != null) images.into(chArt, android.net.Uri.fromFile(new File(ch.art)).toString(), px(CH_CARD_W), px(16));
+        if (changed && ch.art != null) chBarFill.setBackground(barFill(channelAccent(ch)));
+        fillChannelCard(ch);
+        if (changed) { chCard.animate().cancel(); chCard.setAlpha(0.75f); chCard.animate().alpha(1f).setDuration(140).start(); }
+    }
+
+    private void fillChannelCard(Tv.Channel ch) {
+        chName.setText(ch.name);
+        chDesc.setText(ch.desc == null ? "" : ch.desc);
+        chDesc.setVisibility(ch.desc == null ? View.GONE : View.VISIBLE);
+        long now = System.currentTimeMillis();
+        Epg.Prog[] nn = Epg.nowNext(ch.tvgId, now);
+        Epg.Prog cur = nn[0], next = nn[1];
+        if (cur != null) {
+            chNowTitle.setText(cur.title);
+            chNowTitle.setTextColor(0xFFFFFFFF);
+            chNowTime.setText(hhmm(cur.start) + " – " + hhmm(cur.stop));
+            float f = Math.max(0f, Math.min(1f, (now - cur.start) / (float) (cur.stop - cur.start)));
+            ((LinearLayout.LayoutParams) chBarFill.getLayoutParams()).weight = f;
+            ((LinearLayout.LayoutParams) chBarRest.getLayoutParams()).weight = 1f - f;
+            chBarFill.requestLayout();
+            chClock.setText(hhmm(now) + " / " + hhmm(cur.stop));
+        } else {
+            chNowTitle.setText(ch.tvgId == null ? "Chưa có lịch phát sóng" : Epg.cached() == null ? "Đang tải lịch phát sóng" : "Chưa có lịch giờ này");
+            chNowTitle.setTextColor(0x99FFFFFF);
+            chNowTime.setText("");
+        }
+        chNowTime.setVisibility(cur != null ? View.VISIBLE : View.GONE);
+        boolean hasDesc = cur != null && cur.desc != null;
+        chNowDesc.setText(hasDesc ? cur.desc : "");
+        chNowDesc.setVisibility(hasDesc ? View.VISIBLE : View.GONE);
+        chBarRow.setVisibility(cur != null ? View.VISIBLE : View.GONE);
+        int nv = next != null ? View.VISIBLE : View.GONE;
+        chDivider.setVisibility(nv);
+        chNextHead.setVisibility(nv);
+        chNextTitle.setVisibility(nv);
+        if (next != null) {
+            chNextHead.setText("Tiếp theo, " + hhmm(next.start));
+            chNextTitle.setText(next.title);
+        }
+    }
+
+    private static String hhmm(long t) {
+        java.util.Calendar c = java.util.Calendar.getInstance();
+        c.setTimeInMillis(t);
+        return String.format(java.util.Locale.ROOT, "%02d:%02d", c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE));
     }
 
     /** Ô kênh trong bảng kênh: ảnh logo kênh 16:9, không ghi tên; bấm là trình phát mở kênh. */
@@ -2240,11 +2497,18 @@ public class MainActivity extends Activity {
         ph.setCornerRadius(px(CH_TILE_R));
         img.setBackground(ph);
         img.setContentDescription(ch.name);
-        Bitmap art = ch.art == null ? null : BitmapFactory.decodeFile(ch.art);
-        if (art != null) img.setImageDrawable(new RoundImage(scaleHQ(art, px(CH_TILE_W), px(CH_TILE_H)), px(CH_TILE_R)));
-        shadowShape(img, px(CH_TILE_R));
+        // ảnh kênh nạp ở nền qua bộ đệm ảnh: bảng hiện ngay (giải mã 106 ảnh trên luồng giao diện làm khựng hơn 1 giây),
+        // lần mở sau lấy thẳng từ bộ đệm. Gán thẳng, không mờ dần, để khỏi giẫm hiệu ứng phóng to khi ô được chọn.
+        if (ch.art != null) images.load(android.net.Uri.fromFile(new File(ch.art)).toString(), px(CH_TILE_W), b -> {
+            if (b == null) return;
+            img.setImageDrawable(new RoundImage(b, px(CH_TILE_R)));
+            // ô đã được chọn từ trước khi ảnh tới (ô chọn sẵn lúc mở bảng): dựng quầng sáng theo màu logo ngay bây giờ
+            if (t.hasFocus() && t.getOnFocusChangeListener() != null) t.getOnFocusChangeListener().onFocusChange(t, true);
+        });
+        // không đổ bóng: ô đang chọn nổi lên (translationZ) thì Android vẽ bóng đậm sát mép, lộ thành viền đen dưới quầng sáng
+        img.setOutlineProvider(null);
         t.addView(img, new FrameLayout.LayoutParams(-1, px(CH_TILE_H)));
-        appsTileFocus(t, img, CH_TILE_W, CH_TILE_H, CH_TILE_R, () -> appsBackdrop(null));
+        appsTileFocus(t, img, CH_TILE_W, CH_TILE_H, CH_TILE_R, () -> { channelBackdrop(ch); showChannelInfo(ch); });
         t.setOnClickListener(v -> playChannel(ch, v));
         return t;
     }
@@ -2308,6 +2572,15 @@ public class MainActivity extends Activity {
         });
         t.setOnKeyListener((v, kc, ev) -> {
             if (isOk(kc) && ev.getAction() == KeyEvent.ACTION_DOWN && ev.getRepeatCount() == 0) press(img, sheen);
+            // nhả OK: bật lại đúng cỡ đang chọn (110%). Không bật lại thì ô kẹt ở cỡ lún 107% trong khi quầng sáng dựng cho
+            // 110%, lộ khe tối thành viền đen quanh ô (rõ nhất khi bấm Back từ trình phát về)
+            if (isOk(kc) && ev.getAction() == KeyEvent.ACTION_UP) {
+                for (View x : new View[]{img, sheen}) {
+                    x.animate().cancel();
+                    x.animate().scaleX(sc).scaleY(sc).translationZ(px(x == img ? 30 : 31))
+                            .setInterpolator(new OvershootInterpolator(2.2f)).setDuration(260).start();
+                }
+            }
             return false;
         });
     }
@@ -2350,9 +2623,13 @@ public class MainActivity extends Activity {
         if (allApps == null) return;
         View a = allApps;
         allApps = null;
+        for (View c : hiddenUnderPanel) c.setVisibility(View.VISIBLE);   // hiện lại màn Home trước khi bảng mờ đi
+        hiddenUnderPanel.clear();
         if (appsFocusWatch != null) { root.getViewTreeObserver().removeOnGlobalFocusChangeListener(appsFocusWatch); appsFocusWatch = null; }
         if (appsScroll != null) { appsScroll.cancel(); appsScroll = null; }
         appsArt = null; appsArtFor = null;
+        ui.removeCallbacks(chTick);
+        chCard = null; chArt = null; chShown = null; chBarFill = null;
         a.animate().alpha(0f).setDuration(160).withEndAction(() -> root.removeView(a)).start();
         tray.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
         shelfRow.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);

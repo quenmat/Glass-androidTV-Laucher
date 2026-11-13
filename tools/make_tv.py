@@ -1,7 +1,7 @@
 # Ô "Truyền hình" cho dock (assets/cards/tv.png) và ảnh từng kênh (16:9) cho hàng kênh + bảng kênh.
 # Chạy: python tools/make_tv.py <kenh.m3u> <thư mục ra ảnh kênh> [thư mục logo thật <tên-không-dấu>.png]
 # Ảnh kênh đẩy lên box cùng kenh.m3u vào Android/data/vn.glass.home/files/tv/.
-import os, re, sys, colorsys
+import os, re, sys
 from PIL import Image, ImageDraw, ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -66,8 +66,6 @@ def dock_card(out):
     card.save(out)
 
 
-# màu nền theo nhóm kênh: sẫm, bão hoà vừa, để chữ trắng nổi và hợp kính mờ của launcher
-GROUP_HUE = {"VTV": 0.98, "Quốc gia": 0.58, "HTV": 0.10, "Địa phương": 0.38, "Quốc tế": 0.72}
 
 
 def slug(name):
@@ -81,25 +79,21 @@ def slug(name):
 
 
 def channel_art(name, group, out):
+    """Kênh chưa có logo thật: tên kênh chữ đậm màu than trên đúng nền xám sáng của ô có logo, dòng nhóm nhỏ dưới."""
     W, H = 640, 360
-    hue = GROUP_HUE.get(group, 0.6)
-    top = tuple(int(v * 255) for v in colorsys.hls_to_rgb(hue, 0.30, 0.55))
-    bot = tuple(int(v * 255) for v in colorsys.hls_to_rgb(hue, 0.14, 0.50))
+    top, bot = (214, 214, 218), (190, 190, 197)
     im = Image.new("RGB", (W, H))
-    px = im.load()
-    for y in range(H):
-        for x in range(W):
-            t = min(1.0, (x / W) * 0.35 + (y / H) * 0.65)
-            px[x, y] = tuple(int(top[i] + (bot[i] - top[i]) * t) for i in range(3))
     d = ImageDraw.Draw(im)
-    # tên kênh: chữ lớn, tự thu nhỏ cho vừa bề ngang; dòng nhóm nhỏ phía dưới
-    size = 108
-    while size > 40:
+    for y in range(H):
+        t = y / H
+        d.line([(0, y), (W, y)], fill=tuple(int(top[i] + (bot[i] - top[i]) * t) for i in range(3)))
+    size = 96
+    while size > 36:
         f = font(size, 800)
-        if d.textlength(name, font=f) <= W - 80: break
+        if d.textlength(name, font=f) <= W - 90: break
         size -= 4
-    d.text((W / 2, H / 2 - 14), name, font=f, fill=(255, 255, 255), anchor="mm")
-    d.text((W / 2, H - 52), group.upper(), font=font(26, 600), fill=(255, 255, 255, 170), anchor="mm")
+    d.text((W / 2, H / 2 - 12), name, font=f, fill=(38, 38, 46), anchor="mm")
+    d.text((W / 2, H - 50), group.upper(), font=font(24, 600), fill=(90, 90, 100), anchor="mm")
     im.save(out)
 
 

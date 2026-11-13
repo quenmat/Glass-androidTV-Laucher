@@ -32,6 +32,8 @@ final class Tv {
 
     static final class Channel {
         String name, group, url, art;   // art: đường dẫn ảnh kênh trên box (null nếu chưa có)
+        String tvgId;                   // mã kênh trong lịch phát sóng (Epg), null nếu không có
+        String desc;                    // một dòng mô tả kênh (glass-desc), null nếu không có
     }
 
     static File dir(Context c) { return c.getExternalFilesDir("tv"); }
@@ -58,6 +60,8 @@ final class Tv {
                     ch = new Channel();
                     ch.name = line.substring(comma + 1).trim();
                     ch.group = attr(line, "group-title");
+                    ch.tvgId = attr(line, "tvg-id");
+                    ch.desc = attr(line, "glass-desc");
                     String logo = attr(line, "tvg-logo");
                     File art = new File(d, logo != null && !logo.isEmpty() ? logo : slug(ch.name) + ".png");
                     if (art.isFile()) ch.art = art.getPath();
@@ -69,6 +73,16 @@ final class Tv {
             }
         } catch (Exception ignored) {}
         return out;
+    }
+
+    /** Nguồn lịch phát sóng ghi ở dòng đầu kenh.m3u (#EXTM3U url-tvg="..."), null nếu không có. */
+    static String epgUrl(Context c) {
+        File d = dir(c);
+        if (d == null) return null;
+        try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader(new File(d, "kenh.m3u")))) {
+            String first = r.readLine();
+            return first == null ? null : attr(first, "url-tvg");
+        } catch (Exception e) { return null; }
     }
 
     static Channel find(Context c, String name) {
