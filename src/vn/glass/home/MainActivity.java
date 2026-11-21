@@ -358,7 +358,7 @@ public class MainActivity extends Activity {
         gear.addView(ic, li);
         // chọn: như nút Apple TV, nền trắng đặc, biểu tượng tối, nổi nhẹ
         gear.setOnFocusChangeListener((v, has) -> {
-            dimGlow(has);
+            dimGlow(has || inShelf);   // rời xuống hàng thumb: quầng ô app vẫn tắt như lúc vào hàng từ dock
             ValueAnimator c = ValueAnimator.ofArgb(has ? 0x47000000 : 0xF2FFFFFF, has ? 0xF2FFFFFF : 0x47000000);
             c.setDuration(220);
             c.addUpdateListener(an -> dot.setColor((int) an.getAnimatedValue()));
@@ -497,7 +497,9 @@ public class MainActivity extends Activity {
         float sx = on ? SCALE_X : 1f, sy = on ? SCALE_Y : 1f;
         img.animate().cancel(); sheen.animate().cancel();
         android.view.animation.Interpolator in = on ? new OvershootInterpolator(0.8f) : EASE;
-        img.animate().scaleX(sx).scaleY(sy).translationZ(on ? px(30) : 0)
+        // độ mờ đi cùng nhịp phóng/thu: cancel() ở trên cắt ngang lần mờ/sáng của shelfState, phải đặt lại đích ở đây
+        // (ô đang chọn luôn sáng; ô thôi chọn mờ 0,6 nếu đang ở hàng thumb), không thì ô kẹt ở độ mờ dở dang
+        img.animate().scaleX(sx).scaleY(sy).translationZ(on ? px(30) : 0).alpha(on || !inShelf ? 1f : 0.6f)
                 .setInterpolator(in).setDuration(on ? 360 : 420).start();
         sheen.animate().scaleX(sx).scaleY(sy).translationZ(on ? px(31) : 0).alpha(on ? 1f : 0f)
                 .setInterpolator(in).setDuration(on ? 360 : 380).start();
@@ -600,7 +602,8 @@ public class MainActivity extends Activity {
                 eplView.setSelected(EplView.SEL_NONE);
                 eplBox.setFocusable(false);
             }
-            dimGlow(has);
+            // rời thẻ xuống hàng thumb (đã vào hàng, quầng đã tắt): đừng bật lại quầng ô app, ô app đang lùi chứ không được chọn
+            dimGlow(has || inShelf);
         });
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.START);
         lp.leftMargin = px(EPL_X); lp.topMargin = px(EPL_TOP);
