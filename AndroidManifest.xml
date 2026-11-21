@@ -15,6 +15,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- địa chỉ của tivi trong mạng nhà: hiện mã QR để điện thoại gửi ảnh lên -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- xem trước kênh IPTV trong bảng kênh: Wi-Fi mặc định lọc gói multicast, phải giữ khoá lúc đang nhận -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <!-- dịch vụ nền giữ soundbar không tự ngủ khi im lặng lâu -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

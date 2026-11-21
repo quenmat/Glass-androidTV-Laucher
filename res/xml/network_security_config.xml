@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- chỉ cho phép http thường với nguồn giá vàng dự phòng BTMC (không có https); mọi nơi khác vẫn bắt buộc https -->
+<!-- chỉ cho phép http thường với nguồn giá vàng dự phòng BTMC (không có https) và cổng nội bộ 127.0.0.1 của khung xem trước
+     kênh (TvPreview chuyển tiếp luồng IPTV cho MediaPlayer, không ra mạng); mọi nơi khác vẫn bắt buộc https -->
 <network-security-config>
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">api.btmc.vn</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
     </domain-config>
 </network-security-config>

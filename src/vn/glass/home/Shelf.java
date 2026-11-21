@@ -27,6 +27,7 @@ final class Shelf {
         boolean continueWatching;
         String gameUri, gameActivity;   // ảnh của ô game: bấm vào là mở thẳng game
         String tvChannel;               // ô kênh truyền hình: bấm vào là trình phát mở kênh này
+        boolean live;                   // video YouTube đang phát trực tiếp (YtFeed): gắn nhãn đỏ trước tên
     }
 
     private static final String WATCH_NEXT = "content://android.media.tv/watch_next_program";

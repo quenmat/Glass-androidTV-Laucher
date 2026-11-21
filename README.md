@@ -7,12 +7,25 @@ Launcher Android TV kiểu Apple TV: kính mờ, chuyển động mượt, chữ
 
 - **Dock app** trên khay kính mờ: ô đang chọn nổi lên, có quầng sáng "thở" nhẹ. App mới cài tự thêm vào
   dock (trước Cửa hàng Play); dock dài hơn màn hình thì trượt ngang.
-- **Hàng nội dung**: bấm xuống từ dock để xem hàng "Xem tiếp" và gợi ý của đúng app đang chọn (đọc từ
+- **Hàng nội dung** nằm ngay trên dock: bấm lên từ dock để chọn "Xem tiếp" và gợi ý của đúng app đang chọn (đọc từ
   TvProvider). Phim từng thấy được nhớ lại (tối đa 8 mỗi app), nên hàng Netflix dần đủ ô. App không đăng
-  nội dung thì hàng để trống.
+  nội dung thì hàng để trống. Mở nội dung từ hàng rồi bấm Home về thì launcher giữ nguyên ô đang chọn, chuyển
+  sang nội dung khác cho nhanh.
+- **Hàng YouTube theo kênh bạn chọn**: video mới của vài kênh đứng trước gợi ý chung của app, kênh đang phát trực
+  tiếp luôn lên đầu (nhãn đỏ). Danh sách kênh `Android/data/vn.glass.home/files/youtube/kenh.json`
+  (`[{"id":"UC...","ten":"...","lay":"moi"|"gan_nhat"|"live","so":3,"luon":true}]`: `moi` vài video mới nhất, `gan_nhat`
+  đang live thì live không thì 1 video mới nhất, `live` chỉ khi đang live, `luon` luôn giữ một ô) và khoá
+  [YouTube Data API v3](https://console.cloud.google.com/apis/library/youtube.googleapis.com) của bạn trong
+  `.../files/youtube/key.txt`; cả hai chỉ nằm trên box, không kèm trong repo. Shorts được bỏ qua. Kiểm tra 10 phút một lần
+  khi đang ở Home (8 kênh tốn khoảng 13% hạn mức miễn phí mỗi ngày).
+- **Hàng FPT Play**: các trận Ngoại hạng Anh chưa đá xong của vòng hiện tại, mỗi ô là banner của trận, trận đang đá lên
+  đầu với nhãn "TRỰC TIẾP", trận cùng giờ thì đội yêu thích đứng trước; bấm ô là app FPT Play mở thẳng trang trận.
+  Lịch đọc từ trang lịch thi đấu công khai của fptplay.vn (lịch theo tuần thứ Hai tới Chủ Nhật), hàng cuộn ngang khi
+  nhiều hơn 5 trận.
 - **Ảnh nền** kèm sẵn 16 ảnh phong cảnh (Unsplash), hoặc ảnh của bạn gửi từ điện thoại, hoặc trộn cả hai; đổi ảnh
   mỗi 10 phút (chỉnh được). Lớp phủ tự đậm lên khi ảnh sáng để chữ và logo không chói.
-- **Ô giá** góc trên phải: BTC, ETH (Binance) và vàng (PNJ / BTMC), màu xanh đỏ theo biến động 24 giờ.
+- **Thẻ giá** góc trên phải: BTC, ETH (Binance) và vàng (PNJ / BTMC) chung một thẻ kính, màu xanh đỏ theo biến
+  động 24 giờ.
 - **Lịch Ngoại hạng Anh** của vòng đang đá: giờ đá, tỉ số, phút thi đấu khi đang đá (cập nhật mỗi phút
   lúc có trận). Vòng đá xong vẫn giữ tới hết ngày hôm sau rồi mới sang vòng kế. Cứ 1 phút lịch thì 30 giây
   hiện bảng xếp hạng, có mũi tên lên/xuống so với trước vòng gần nhất. Đội yêu thích (mặc định Man United)
@@ -34,11 +47,13 @@ Launcher Android TV kiểu Apple TV: kính mờ, chuyển động mượt, chữ
   `bg` ảnh nền, `thumbs`) và `<tên>.png` (ảnh ô 464x290). Bấm ô là app giả lập (vd PPSSPP) mở thẳng game.
   Với `"pkg": "com.retroarch"` (RetroArch bản Cửa hàng Play), core chọn theo đuôi file (`.sfc`/`.smc` Snes9x,
   `.nes`, `.gba`, `.gb`, `.md`); file game phải nằm trong `Android/media/com.retroarch/`.
-- **Ô Truyền hình** (trước ô Apps): hiện khi có trình phát ([Just Player](https://play.google.com/store/apps/details?id=com.brouken.player),
-  không có thì VLC) và danh sách kênh `Android/data/vn.glass.home/files/tv/kenh.m3u` (kèm ảnh kênh `<tên-không-dấu>.png`).
-  Chọn ô thì hàng bên dưới hiện kênh xem gần đây; bấm vào mở bảng kênh, nhóm theo `group-title`. Chọn kênh nào thì ô bên
+- **Ô Truyền hình** (trước ô Apps): hiện khi có trình phát ([VLC](https://play.google.com/store/apps/details?id=org.videolan.vlc),
+  không có thì [Just Player](https://play.google.com/store/apps/details?id=com.brouken.player)) và danh sách kênh `Android/data/vn.glass.home/files/tv/kenh.m3u` (kèm ảnh kênh `<tên-không-dấu>.png`).
+  Chọn ô thì hàng thumb hiện kênh xem gần đây; đứng trên một thumb kênh 0,3 giây thì thumb phát thẳng kênh đó. Bấm ô mở bảng kênh, nhóm theo `group-title`. Chọn kênh nào thì ô bên
   phải hiện mô tả kênh (`glass-desc`), chương trình đang chiếu với thanh tiến độ và chương trình kế, lấy từ lịch XMLTV ghi ở
-  dòng đầu (`#EXTM3U url-tvg="..."`, khớp kênh theo `tvg-id`; box tải lại vài tiếng một lần). Bấm kênh là trình phát mở
+  dòng đầu (`#EXTM3U url-tvg="..."`, khớp kênh theo `tvg-id`; box tải lại vài tiếng một lần). Đứng yên trên một kênh 0,7 giây
+  thì logo nở thành khung xem trước phát thẳng kênh đó (luồng `udp://` multicast), tiếng to dần; rời kênh hay đóng bảng là
+  tắt và nhả hết bộ nhớ. Bấm kênh là trình phát mở
   thẳng luồng, bấm Back về lại bảng. Danh sách kênh do chủ máy tự đặt (luồng IPTV của nhà mạng chỉ xem được trong mạng
   nhà), không kèm trong repo; ảnh kênh dựng bằng `python tools/make_tv.py <kenh.m3u> <thư mục ra> [thư mục logo]`.
 
@@ -116,12 +131,14 @@ adb shell am start -a vn.glass.home.SAVER       # hiện màn hình chờ ngay
 adb shell am start -a vn.glass.home.NEXT_BG     # sang ảnh nền kế tiếp
 adb shell am start -a vn.glass.home.EPL_DEMO    # xem thử thẻ bóng đá lúc đang đá / đá xong (60 giây)
 adb logcat -s GlassShelf GlassImg               # soi nội dung các app đăng lên và lỗi tải ảnh
+adb logcat -s GlassYt GlassFpt                  # soi hàng YouTube (số video, live) và hàng FPT Play (số trận)
 ```
 
 ## Lưu ý
 
-- Dữ liệu lấy từ API công khai không chính thức (Fantasy Premier League, Binance, PNJ, BTMC); bên đó đổi
-  hoặc chặn thì ô tương ứng có thể ngừng cập nhật, phần còn lại vẫn chạy.
+- Dữ liệu lấy từ API công khai không chính thức (Fantasy Premier League, Binance, PNJ, BTMC) và trang lịch thi đấu
+  công khai của fptplay.vn; bên đó đổi hoặc chặn thì ô tương ứng có thể ngừng cập nhật, phần còn lại vẫn chạy.
+  Hàng YouTube dùng YouTube Data API chính thức với khoá của chính bạn.
 - Bố cục tính cho màn 1920x1080 và danh sách app Việt Nam; máy khác có thể cần chỉnh.
 - Logo và tên các app thuộc về chủ sở hữu tương ứng, chỉ dùng để đánh dấu ô app trên dock.
 

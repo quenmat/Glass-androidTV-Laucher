@@ -13,16 +13,16 @@ import java.util.List;
 /**
  * Truyền hình qua IPTV: danh sách kênh là tệp kenh.m3u (kèm ảnh <tên>.png) trong Android/data/vn.glass.home/files/tv/,
  * do chủ máy tự đặt (địa chỉ kênh là luồng udp://@... của nhà mạng, chỉ xem được trong mạng nhà, không đưa lên repo).
- * Launcher hiện kênh; bấm kênh thì trình phát mở thẳng luồng: Just Player nếu có (nhẹ, vào hình ~1 giây), không thì
- * VLC (~2 giây, phải để tăng tốc phần cứng Đầy đủ thì chip của box mới tự khử xen kẽ). Bấm Back là trình phát đóng,
+ * Launcher hiện kênh; bấm kênh thì trình phát mở thẳng luồng: VLC nếu có (chủ máy chọn; phải để tăng tốc phần cứng
+ * Đầy đủ thì chip của box mới tự khử xen kẽ), không thì Just Player (nhẹ, vào hình ~1 giây). Bấm Back là trình phát đóng,
  * về đúng chỗ đang đứng trên launcher. Cả hai phát ở 60Hz: luồng truyền hình không ghi tốc độ khung hình nên trình
  * phát không biết để chuyển 50Hz (chủ máy đã chọn chấp nhận).
  */
 final class Tv {
     // trình phát theo thứ tự ưu tiên: gói + màn phát (gọi thẳng màn phát nên nhận cả địa chỉ udp://)
     private static final String[][] PLAYERS = {
-            {"com.brouken.player", "com.brouken.player.PlayerActivity"},
-            {"org.videolan.vlc", "org.videolan.vlc.gui.video.VideoPlayerActivity"}};
+            {"org.videolan.vlc", "org.videolan.vlc.gui.video.VideoPlayerActivity"},
+            {"com.brouken.player", "com.brouken.player.PlayerActivity"}};
 
     /** Trình phát đã cài đầu tiên theo thứ tự ưu tiên, null nếu chưa có cái nào. */
     static String[] player(java.util.Set<String> installed) {

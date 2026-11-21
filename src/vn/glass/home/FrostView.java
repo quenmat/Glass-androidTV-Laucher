@@ -30,7 +30,8 @@ final class FrostView extends View {
     private boolean tame;                     // kính dock: thêm lớp hãm sáng theo độ sáng nền
     private int shadeFrom = 0x30, shadeTo = 0x30;
     private final Paint shade = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private float shift, shiftY;   // khay đang trượt bao nhiêu: vùng nhoè dời ngược lại để vẫn khớp nền
+    private float shift, shiftY;
+    private int filterColor = 1;   // màu lớp phủ đang trộn vào nét vẽ ảnh (1: chưa đặt)   // khay đang trượt bao nhiêu: vùng nhoè dời ngược lại để vẫn khớp nền
 
     FrostView(Context c, float radius, float screenW, float screenH, float offX, float offY, float stroke) {
         super(c);
@@ -67,6 +68,12 @@ final class FrostView extends View {
     /** Kính tối đậm (thẻ nhiều chữ nhỏ như lịch thi đấu): ~64% trên nền tối, tới ~78% trên nền sáng. */
     FrostView deep() {
         darkMin = 0xA3; darkMax = 0xC7;
+        return dark();
+    }
+
+    /** Kính khói của dock: tối hơn kính ô giá (~72% trên nền tối, tới ~87% trên nền sáng) để nền dưới khay không chói. */
+    FrostView smoky() {
+        darkMin = 0xB8; darkMax = 0xDE;
         return dark();
     }
 
@@ -180,6 +187,17 @@ final class FrostView extends View {
 
     @Override
     protected void onDraw(Canvas c) {
+        // lớp phủ (đen/sữa) trộn thẳng vào nét vẽ ảnh nhoè bằng bộ lọc màu: chỉ một hình bo góc, một mép khử răng cưa.
+        // Vẽ ảnh rồi phủ một hình bo thứ hai thì ở góc bo hai mép mịn chồng nhau không kín, lộ viền sáng mảnh.
+        if (adaptive) milk.setColor(currentMilk() << 24);   // đổi độ đậm cùng nhịp hoà ảnh
+        int mc = milk.getColor();
+        boolean hasImg = img.getShader() != null;
+        if (hasImg && mc != filterColor) {
+            filterColor = mc;
+            android.graphics.ColorFilter f = new android.graphics.PorterDuffColorFilter(mc, android.graphics.PorterDuff.Mode.SRC_ATOP);
+            img.setColorFilter(f);
+            old.setColorFilter(f);
+        }
         if (old.getShader() != null && mix < 1f) {
             old.setAlpha(255);
             c.drawRoundRect(rect, radius, radius, old);
@@ -188,8 +206,7 @@ final class FrostView extends View {
             img.setAlpha(Math.round(255 * mix));
             c.drawRoundRect(rect, radius, radius, img);
         }
-        if (adaptive) milk.setColor(currentMilk() << 24);   // đổi độ đậm cùng nhịp hoà ảnh
-        c.drawRoundRect(rect, radius, radius, milk);
+        if (!hasImg) c.drawRoundRect(rect, radius, radius, milk);   // chưa có ảnh: chỉ lớp phủ
         if (tame && currentShade() > 0) {
             shade.setColor(currentShade() << 24);
             c.drawRoundRect(rect, radius, radius, shade);

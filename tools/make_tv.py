@@ -34,7 +34,8 @@ def tv_icon(size):
     for x in (31, 69):
         d.ellipse([(x - 2.1) * u, 0.9 * u, (x + 2.1) * u, 5.1 * u], fill=ant)
     d.rounded_rectangle([44 * u, 11 * u, 56 * u, 21 * u], int(3 * u), fill=(140, 110, 99, 255))
-    d.rounded_rectangle([12 * u, 72 * u, 22 * u, 84 * u], int(2.5 * u), fill=(140, 110, 99, 255))
+    for fx in (12, 78):   # hai chân, đối xứng dưới thân máy
+        d.rounded_rectangle([fx * u, 72 * u, (fx + 10) * u, 84 * u], int(2.5 * u), fill=(140, 110, 99, 255))
     d.rounded_rectangle([0, 17 * u, 100 * u, 75 * u], int(9 * u), fill=(108, 78, 66, 255))
     sx0, sy0, sx1, sy1 = 9 * u, 24 * u, 79 * u, 68 * u
     bars = [(229, 115, 115), (255, 213, 79), (255, 238, 117), (129, 199, 132), (128, 216, 255), (179, 157, 219), (186, 104, 200)]
