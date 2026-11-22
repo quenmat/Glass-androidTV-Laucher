@@ -41,6 +41,11 @@ final class YtFeed {
     /** Danh sách đang có (live trước), đọc được từ luồng giao diện. */
     static List<Shelf.Item> items() { return items; }
 
+    /** Nạp hàng đã lưu lúc launcher vừa khởi động (chưa có lượt tải nào); lượt tải đầu sẽ thay. */
+    static void restore(List<Shelf.Item> l) {
+        synchronized (YtFeed.class) { if (items.isEmpty() && !l.isEmpty()) items = Collections.unmodifiableList(l); }
+    }
+
     private static final class Ch { String id, name, mode; int n; boolean always; }
     private static final class Vid { String id, title, art, channel; boolean live, upcoming, isShort; long published; }
 
@@ -54,6 +59,7 @@ final class YtFeed {
         try {
             // 1. vài mục mới nhất trong danh sách tải lên của từng kênh (UC... -> UU...)
             Map<String, List<String>> idsOf = new HashMap<>();
+            Map<String, String> liveIdOf = new HashMap<>();
             Set<String> all = new LinkedHashSet<>();
             for (Ch c : chans) {
                 int want = "moi".equals(c.mode) ? Math.max(c.n, 1) * 3 + 2 : 5;
@@ -66,6 +72,10 @@ final class YtFeed {
                     if (v != null) { ids.add(v); all.add(v); }
                 }
                 idsOf.put(c.id, ids);
+                // buổi live đặt lịch từ trước nằm sâu dưới các Shorts mới đăng, danh sách trên không với tới: hỏi
+                // thẳng trang /live của kênh (không tốn hạn mức); bước 2 vẫn xác nhận video đó đang phát thật
+                String lv = liveNow(c.id);
+                if (lv != null) { liveIdOf.put(c.id, lv); all.add(lv); }
             }
             // 2. chi tiết mọi video trong một lần gọi: tên, ảnh, đang live hay không, độ dài
             Map<String, Vid> vids = new HashMap<>();
@@ -105,7 +115,9 @@ final class YtFeed {
             List<Vid> live = new ArrayList<>(), pinned = new ArrayList<>(), rest = new ArrayList<>();
             for (Ch c : chans) {
                 boolean hasLive = false;
-                for (String id : idsOf.get(c.id)) {
+                Set<String> cand = new LinkedHashSet<>(idsOf.get(c.id));
+                if (liveIdOf.containsKey(c.id)) cand.add(liveIdOf.get(c.id));
+                for (String id : cand) {
                     Vid v = vids.get(id);
                     if (v != null && v.live) { live.add(v); hasLive = true; }
                 }
@@ -175,6 +187,38 @@ final class YtFeed {
             while (mm.find()) m.put(mm.group(2), mm.group(1).startsWith("shorts"));
         } catch (Exception ignored) {}
         return m;
+    }
+
+    private static final Pattern LIVE_LINK =
+            Pattern.compile("<link rel=\"canonical\" href=\"([^\"]+)\"");
+    private static final Pattern WATCH_ID = Pattern.compile("^https://www\\.youtube\\.com/watch\\?v=([\\w-]{11})$");
+
+    /** Video kênh đang phát trực tiếp (hoặc sắp phát), null nếu không có. Trang /live bản di động đặt đường dẫn
+     *  chuẩn ngay đầu trang (vài KB đầu), nên chỉ đọc tối đa 32 KB rồi ngắt, khỏi tải cả trang ~1 MB. */
+    private static String liveNow(String channelId) {
+        HttpURLConnection c = null;
+        try {
+            c = (HttpURLConnection) new URL("https://m.youtube.com/channel/" + channelId + "/live").openConnection();
+            c.setConnectTimeout(6000);
+            c.setReadTimeout(8000);
+            c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) Mobile");
+            c.setRequestProperty("Accept-Language", "vi");
+            if (c.getResponseCode() != 200) return null;
+            InputStream in = c.getInputStream();
+            ByteArrayOutputStream b = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int k;
+            while (b.size() < 32 * 1024 && (k = in.read(buf)) > 0) {
+                b.write(buf, 0, k);
+                Matcher m = LIVE_LINK.matcher(b.toString("UTF-8"));
+                if (m.find()) {   // trỏ tới một video: đang live (hoặc sắp); trỏ về kênh: không live
+                    Matcher w = WATCH_ID.matcher(m.group(1));
+                    return w.matches() ? w.group(1) : null;
+                }
+            }
+        } catch (Exception ignored) {
+        } finally { if (c != null) c.disconnect(); }
+        return null;
     }
 
     private static List<Ch> channels(File f) {

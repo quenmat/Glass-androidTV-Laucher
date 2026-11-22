@@ -24,6 +24,9 @@ final class RoundImage extends Drawable {
     RoundImage(Bitmap bmp, float radius) {
         this.bmp = bmp;
         this.radius = radius;
+        // ảnh lớn hơn ô (để nét khi phóng lúc chọn) bị card đồ hoạ thu nhỏ: không có mipmap thì lọc 4 điểm bỏ sót
+        // điểm ảnh, viền chữ và nét mảnh thành răng cưa; có mipmap thì thu nhỏ mịn ở mọi cỡ
+        bmp.setHasMipMap(true);
         paint.setShader(new BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP));
     }
 

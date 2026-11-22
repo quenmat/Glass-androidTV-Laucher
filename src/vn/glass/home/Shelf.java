@@ -28,6 +28,7 @@ final class Shelf {
         String gameUri, gameActivity;   // ảnh của ô game: bấm vào là mở thẳng game
         String tvChannel;               // ô kênh truyền hình: bấm vào là trình phát mở kênh này
         boolean live;                   // video YouTube đang phát trực tiếp (YtFeed): gắn nhãn đỏ trước tên
+        long startAt, until;            // ô trận / chương trình: từ startAt là trực tiếp, quá until thì bỏ (0: không hạn)
     }
 
     private static final String WATCH_NEXT = "content://android.media.tv/watch_next_program";
@@ -107,6 +108,41 @@ final class Shelf {
         }
         try (FileOutputStream o = new FileOutputStream(f)) { o.write(save.toString().getBytes("UTF-8")); } catch (Exception ignored) {}
         return kept;
+    }
+
+    // ---------- lưu hàng tự làm (YouTube, FPT Play, TV360) ----------
+    // Danh sách các hàng này tải từ mạng; launcher khởi động lại (cài bản mới, hệ thống dọn RAM) thì mất, phải đợi
+    // tải lại mới có ô. Lưu xuống máy để vừa mở là có hàng cũ ngay, lượt tải mới về thì thay.
+
+    static void saveItems(File f, List<Item> l) {
+        JSONArray a = new JSONArray();
+        try {
+            for (Item i : l) a.put(new JSONObject().put("pkg", i.pkg).put("title", i.title).put("sub", i.sub)
+                    .put("art", i.art).put("intent", i.intent).put("live", i.live)
+                    .put("startAt", i.startAt).put("until", i.until));
+            File tmp = new File(f.getPath() + ".tmp");
+            try (FileOutputStream o = new FileOutputStream(tmp)) { o.write(a.toString().getBytes("UTF-8")); }
+            tmp.renameTo(f);
+        } catch (Exception ignored) {}
+    }
+
+    /** Hàng đã lưu; cũ quá maxAgeMs (ô "trực tiếp" có thể đã hết) hoặc lỗi thì rỗng. */
+    static List<Item> loadItems(File f, long maxAgeMs) {
+        List<Item> out = new ArrayList<>();
+        try {
+            if (!f.exists() || System.currentTimeMillis() - f.lastModified() > maxAgeMs) return out;
+            JSONArray a = new JSONArray(new String(java.nio.file.Files.readAllBytes(f.toPath()), "UTF-8"));
+            for (int k = 0; k < a.length(); k++) {
+                JSONObject o = a.getJSONObject(k);
+                Item i = new Item();
+                i.pkg = o.optString("pkg", null); i.title = o.optString("title", "");
+                i.sub = o.optString("sub", null); i.art = o.optString("art", null);
+                i.intent = o.optString("intent", null); i.live = o.optBoolean("live", false);
+                i.startAt = o.optLong("startAt", 0); i.until = o.optLong("until", 0);
+                if (i.pkg != null && i.art != null) out.add(i);
+            }
+        } catch (Exception ignored) {}
+        return out;
     }
 
     /** Cùng một phim: cùng app + cùng tên (đường dẫn mở phim có thể đổi theo phiên). */

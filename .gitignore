@@ -3,3 +3,6 @@ build/
 __pycache__/
 mock/
 helper/build/
+
+# đồ riêng của chủ máy, không đưa lên
+rieng/

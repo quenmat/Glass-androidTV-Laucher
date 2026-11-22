@@ -21,6 +21,9 @@
     <!-- dịch vụ nền giữ soundbar không tự ngủ khi im lặng lâu -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- quyền "cùng chữ ký": app nào khoá màn của mình bằng quyền này thì chỉ Glass Home (cùng khoá ký) mở được -->
+    <permission android:name="vn.glass.home.permission.MO_APP" android:protectionLevel="signature" />
+    <uses-permission android:name="vn.glass.home.permission.MO_APP" />
 
     <application
         android:label="Glass Home"

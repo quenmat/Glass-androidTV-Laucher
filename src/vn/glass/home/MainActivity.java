@@ -147,6 +147,7 @@ public class MainActivity extends Activity {
         apps = Apps.dock(this);
         focused = prefs().getInt("focused", 0);
         if (focused >= apps.size()) focused = 0;
+        restoreFeeds();   // hàng YouTube / FPT Play / TV360 đã lưu: có ô ngay, khỏi đợi tải mạng
         buildUi();
         setContentView(root);
         watchTvProvider(true);
@@ -226,6 +227,7 @@ public class MainActivity extends Activity {
             ui.postDelayed(eplCycle, eplView.mode() == EplView.TABLE ? EPL_TABLE_MS : EPL_FIXTURES_MS);
         ui.removeCallbacks(bgRotate); ui.postDelayed(bgRotate, bgRotateMs());
         ui.removeCallbacks(ytTick); ui.post(ytTick);   // quay về màn hình chính: đủ 10 phút từ lượt trước thì xem lại ngay
+        redrawIfStale();   // ô trận đã hết giờ trong lúc xem app khác: bỏ ngay, không đợi lượt tải
         armSaver();   // đứng yên ở màn hình chính 5 phút thì hiện màn hình chờ
         // lịch phát sóng sẵn trong bộ nhớ trước khi mở bảng kênh; cũ thì tải lại ở nền
         for (Apps.App a : apps) if (a.tv) { bg.execute(() -> { Epg.load(this); Epg.refreshIfStale(this); }); break; }
@@ -245,6 +247,7 @@ public class MainActivity extends Activity {
         ui.removeCallbacks(btcTick);   // rời launcher: ngừng gọi mạng lấy giá
         ui.removeCallbacks(goldTick);
         ui.removeCallbacks(ytTick);
+        ui.removeCallbacks(feedBoundary);
         ui.removeCallbacks(eplTick);
         ui.removeCallbacks(eplCycle);
         ui.removeCallbacks(bgRotate);
@@ -1290,6 +1293,8 @@ public class MainActivity extends Activity {
         FrameLayout.LayoutParams lbd = new FrameLayout.LayoutParams(px(BADGE_W), px(BADGE_H), Gravity.TOP | Gravity.START);
         lbd.setMargins(px(10), px(10), 0, 0);
         face.addView(badge, lbd);
+        // lớp bóng khi chọn (mặt kính, viền sáng, vệt sáng lướt một lần): con cuối của mặt ô, đè lên mọi thứ
+        face.addView(new ThumbGloss(this, tr, px(1.5f)), new FrameLayout.LayoutParams(-1, -1));
         t.addView(face, new FrameLayout.LayoutParams(-1, -1));
         t.setLayerType(View.LAYER_TYPE_HARDWARE, null);
         // phóng đều từ tâm ra 4 phía tới đúng cỡ nguyên (thêm 32x18 điểm ảnh, cùng một tỉ lệ ~109,6%):
@@ -1316,6 +1321,7 @@ public class MainActivity extends Activity {
                     // lớn, dải tối, chữ (GPU box đã ~15ms/khung, vẽ lại ô là trễ khung, ô nở trông khựng)
                     .withLayer()
                     .setInterpolator(EASE).setDuration(has ? 300 : 260).start();
+            thumbGloss((FrameLayout) v).focus(has, wait);
             if (has) { scrollRowTo(i); spreadThumbs(i); scheduleThumbPreview(i); }
         });
         // nhấn: lún nhẹ ngay; thả: phồng lại đúng cỡ chọn rồi mở nội dung, cửa sổ phóng ra từ ô này
@@ -1333,6 +1339,11 @@ public class MainActivity extends Activity {
             openItem(i, v);
         });
         return t;
+    }
+
+    private static ThumbGloss thumbGloss(FrameLayout t) {
+        FrameLayout face = (FrameLayout) t.getChildAt(0);
+        return (ThumbGloss) face.getChildAt(face.getChildCount() - 1);
     }
 
     private static ImageView thumbImage(FrameLayout t) { return (ImageView) ((FrameLayout) t.getChildAt(0)).getChildAt(0); }
@@ -1454,7 +1465,7 @@ public class MainActivity extends Activity {
         List<Shelf.Item> own = itemsOf(a);
         List<Shelf.Item> items = new ArrayList<>();
         // FPT Play: đủ mọi trận của vòng (hàng cuộn); app khác giữ một màn SHELF_N ô như cũ
-        int cap = FptFeed.PKG.equals(a.pkg) ? ROW_MAX : SHELF_N;
+        int cap = FptFeed.PKG.equals(a.pkg) || Tv360Feed.PKG.equals(a.pkg) ? ROW_MAX : SHELF_N;
         for (Shelf.Item it : own) { if (items.size() < cap) items.add(it); }
         // hàng chỉ có nội dung của chính app đang chọn; app không có nội dung thì hàng để trống (không mượn app khác)
         boolean mixed = false;
@@ -1866,7 +1877,13 @@ public class MainActivity extends Activity {
         List<Shelf.Item> l = shelf.get(a.pkg);
         if (FptFeed.PKG.equals(a.pkg) && !FptFeed.items().isEmpty()) {
             // FPT Play: trận Ngoại hạng Anh đang đá / sắp đá (banner trận) trước nội dung app tự đăng
-            List<Shelf.Item> out = new ArrayList<>(FptFeed.items());
+            List<Shelf.Item> out = timely(FptFeed.items());
+            if (l != null) out.addAll(l);
+            return out;
+        }
+        if (Tv360Feed.PKG.equals(a.pkg) && !Tv360Feed.items().isEmpty()) {
+            // TV360: trận Cúp C1 đang đá / sắp đá, rồi các chương trình đang phát trực tiếp, trước nội dung app tự đăng
+            List<Shelf.Item> out = timely(Tv360Feed.items());
             if (l != null) out.addAll(l);
             return out;
         }
@@ -1889,26 +1906,91 @@ public class MainActivity extends Activity {
     private final java.util.concurrent.atomic.AtomicBoolean ytBusy = new java.util.concurrent.atomic.AtomicBoolean();
     private final Runnable ytTick = new Runnable() {
         @Override public void run() {
-            long wait = ytLastAt + YT_EVERY - android.os.SystemClock.elapsedRealtime();
+            long wait = ytLastAt + (anyLive() ? LIVE_EVERY : YT_EVERY) - android.os.SystemClock.elapsedRealtime();
             if (ytLastAt != 0 && wait > 0) { ui.postDelayed(this, wait); return; }
             if (thumbPrev != null) { ui.postDelayed(this, 30_000); return; }
             if (ytBusy.compareAndSet(false, true)) {
                 ytLastAt = android.os.SystemClock.elapsedRealtime();
-                String fav = favAbbr();
+                String fav = favAbbr(), favName = favName();
                 net.execute(() -> {
-                    boolean changed = YtFeed.refresh(getApplicationContext(), SHELF_N);
-                    changed |= FptFeed.refresh(fav, ROW_MAX);   // cùng nhịp 10 phút: trận FPT Play đang đá / sắp đá
+                    // hàng trận / trực tiếp trước (vài lượt gọi), xong là vẽ ngay; YouTube sau; lọc phim (nhiều trang) sau cùng
+                    if (FptFeed.refresh(fav, ROW_MAX) | Tv360Feed.refresh(getApplicationContext(), favName, ROW_MAX)) feedsChanged();
+                    if (YtFeed.refresh(getApplicationContext(), SHELF_N)) feedsChanged();
+                    if (FptFeed.refreshFilms()) feedsChanged();
                     ytBusy.set(false);
-                    if (changed) ui.post(() -> {
-                        shelfVersion++;
-                        // đang đứng trong hàng thì không đổ lại dưới tay người dùng; lần ra dock / đổi app sẽ vẽ bản mới
-                        if (!inShelf) fillRow(apps.get(focused));
-                    });
                 });
             }
-            ui.postDelayed(this, YT_EVERY);
+            // đang có trận / chương trình trực tiếp: xem lại dày hơn (trận xong, đổi trận) cho hàng khỏi lệch
+            ui.postDelayed(this, anyLive() ? LIVE_EVERY : YT_EVERY);
         }
     };
+
+    private static final long LIVE_EVERY = 3 * 60_000;
+    private static final long FEED_KEEP_MS = 12 * 3600_000L;   // hàng đã lưu cũ hơn chừng này thì bỏ, đợi tải mới
+
+    private File feedFile(String name) { return new File(getFilesDir(), "hang_" + name + ".json"); }
+
+    private void restoreFeeds() {
+        YtFeed.restore(Shelf.loadItems(feedFile("youtube"), FEED_KEEP_MS));
+        FptFeed.restore(Shelf.loadItems(feedFile("fpt"), FEED_KEEP_MS));
+        Tv360Feed.restore(Shelf.loadItems(feedFile("tv360"), FEED_KEEP_MS));
+    }
+
+    /** Một hàng vừa đổi (luồng nền): lưu cả ba hàng rồi vẽ lại. */
+    private void feedsChanged() {
+        Shelf.saveItems(feedFile("youtube"), YtFeed.items());
+        Shelf.saveItems(feedFile("fpt"), FptFeed.items());
+        Shelf.saveItems(feedFile("tv360"), Tv360Feed.items());
+        ui.post(() -> {
+            shelfVersion++;
+            // đang đứng trong hàng thì không đổ lại dưới tay người dùng; lần ra dock / đổi app sẽ vẽ bản mới
+            if (!inShelf) fillRow(apps.get(focused));
+            scheduleFeedBoundary();
+        });
+    }
+
+    /** Ô trận / chương trình theo giờ thật: quá giờ thì bỏ, tới giờ thì thành "trực tiếp" (khỏi đợi lượt tải). */
+    private static List<Shelf.Item> timely(List<Shelf.Item> l) {
+        long now = System.currentTimeMillis();
+        List<Shelf.Item> out = new ArrayList<>(l.size());
+        for (Shelf.Item it : l) {
+            if (it.until > 0 && now > it.until) continue;
+            if (it.startAt > 0 && now >= it.startAt) it.live = true;
+            out.add(it);
+        }
+        return out;
+    }
+
+    private boolean anyLive() {
+        long now = System.currentTimeMillis();
+        for (List<Shelf.Item> l : java.util.Arrays.asList(FptFeed.items(), Tv360Feed.items(), YtFeed.items()))
+            for (Shelf.Item it : l) if ((it.live || (it.startAt > 0 && now >= it.startAt)) && (it.until == 0 || now <= it.until)) return true;
+        return false;
+    }
+
+    /** Mốc gần nhất một ô tới giờ hoặc hết giờ; tới mốc thì vẽ lại hàng (đang ở màn hình chính). */
+    private final Runnable feedBoundary = this::redrawIfStale;
+
+    private void scheduleFeedBoundary() {
+        ui.removeCallbacks(feedBoundary);
+        long now = System.currentTimeMillis(), next = Long.MAX_VALUE;
+        for (List<Shelf.Item> l : java.util.Arrays.asList(FptFeed.items(), Tv360Feed.items()))
+            for (Shelf.Item it : l) {
+                if (it.startAt > now && !it.live) next = Math.min(next, it.startAt);
+                if (it.until > now) next = Math.min(next, it.until);
+            }
+        if (next != Long.MAX_VALUE && resumedNow) ui.postDelayed(feedBoundary, next - now + 1000);
+    }
+
+    private void redrawIfStale() {
+        long now = System.currentTimeMillis();
+        boolean stale = false;
+        for (Shelf.Item it : rowItems)
+            if ((it.until > 0 && now > it.until) || (it.startAt > 0 && now >= it.startAt && !it.live)) { stale = true; break; }
+        // chỉ vẽ lại khi hàng đang hiện thật sự lệch giờ (khỏi nháy hàng mỗi lần quay về)
+        if (stale && !inShelf && apps != null && focused < apps.size()) { shelfVersion++; fillRow(apps.get(focused)); }
+        scheduleFeedBoundary();
+    }
 
     /** Mã 3 chữ của đội yêu thích (vd MUN) theo dữ liệu thẻ EPL; chưa có dữ liệu thì null. */
     private String favAbbr() {
@@ -1916,6 +1998,15 @@ public class MainActivity extends Activity {
         if (d == null) return null;
         int code = Wallpapers.favTeam(this);
         for (Epl.Team t : d.teams.values()) if (t.code == code) return t.abbr;
+        return null;
+    }
+
+    /** Tên ngắn của đội yêu thích (vd Man City) theo dữ liệu thẻ EPL; chưa có dữ liệu thì null. */
+    private String favName() {
+        Epl.Data d = eplView == null ? null : eplView.data();
+        if (d == null) return null;
+        int code = Wallpapers.favTeam(this);
+        for (Epl.Team t : d.teams.values()) if (t.code == code) return t.name;
         return null;
     }
 

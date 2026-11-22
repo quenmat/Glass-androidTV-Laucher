@@ -115,7 +115,15 @@ final class Images {
         BitmapFactory.Options d = new BitmapFactory.Options();
         d.inSampleSize = s;
         d.inPreferredConfig = Bitmap.Config.ARGB_8888;
-        return BitmapFactory.decodeByteArray(data, 0, data.length, d);
+        Bitmap b = BitmapFactory.decodeByteArray(data, 0, data.length, d);
+        // inSampleSize chỉ chia theo luỹ thừa 2 nên ảnh có thể còn rộng gần gấp đôi cỡ cần: thu đúng cỡ bằng bộ lọc
+        // (đỡ RAM, và card đồ hoạ khỏi phải thu nhỏ nhiều lúc vẽ)
+        if (b != null && b.getWidth() > reqW * 1.15f) {
+            Bitmap r = Bitmap.createScaledBitmap(b, reqW, Math.max(1, Math.round(b.getHeight() * (reqW / (float) b.getWidth()))), true);
+            if (r != b) b.recycle();
+            b = r;
+        }
+        return b;
     }
 
     private InputStream open(String uri) throws Exception {
