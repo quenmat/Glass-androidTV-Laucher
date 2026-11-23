@@ -100,6 +100,7 @@ public class MainActivity extends Activity {
     private TextView clock, rowHead;
     private List<Shelf.Item> rowItems = Collections.emptyList();
     private String rowKey;
+    private String rowApp;   // app của hàng đang hiện (để biết lần vẽ lại chỉ là hàng tải lại hay đã đổi app)
     private int shelfVersion;
     private LinearLayout tray, shelfRow;
     private final List<FrameLayout> cards = new ArrayList<>();
@@ -1293,8 +1294,8 @@ public class MainActivity extends Activity {
         FrameLayout.LayoutParams lbd = new FrameLayout.LayoutParams(px(BADGE_W), px(BADGE_H), Gravity.TOP | Gravity.START);
         lbd.setMargins(px(10), px(10), 0, 0);
         face.addView(badge, lbd);
-        // lớp bóng khi chọn (mặt kính, viền sáng, vệt sáng lướt một lần): con cuối của mặt ô, đè lên mọi thứ
-        face.addView(new ThumbGloss(this, tr, px(1.5f)), new FrameLayout.LayoutParams(-1, -1));
+        // lớp bóng khi chọn (mặt kính tĩnh, không viền): con cuối của mặt ô, đè lên mọi thứ
+        face.addView(new ThumbGloss(this, tr), new FrameLayout.LayoutParams(-1, -1));
         t.addView(face, new FrameLayout.LayoutParams(-1, -1));
         t.setLayerType(View.LAYER_TYPE_HARDWARE, null);
         // phóng đều từ tâm ra 4 phía tới đúng cỡ nguyên (thêm 32x18 điểm ảnh, cùng một tỉ lệ ~109,6%):
@@ -1461,6 +1462,9 @@ public class MainActivity extends Activity {
         String key = a.key + "|" + shelfVersion;
         if (key.equals(rowKey)) return;
         rowKey = key;
+        // cùng app, chỉ là hàng vừa tải lại: giữ banner cũ tới khi banner mới sẵn sàng rồi hoà dần vào, tiêu đề đứng yên
+        boolean sameApp = a.key.equals(rowApp);
+        rowApp = a.key;
 
         List<Shelf.Item> own = itemsOf(a);
         List<Shelf.Item> items = new ArrayList<>();
@@ -1477,10 +1481,12 @@ public class MainActivity extends Activity {
         else if (mixed || own.isEmpty()) head = heading("Xem tiếp", null);
         else head = heading(own.get(0).continueWatching ? "Đang xem dở" : "Gợi ý", a.label);
         rowItems = items;
-        rowHead.animate().cancel();
-        rowHead.setAlpha(0f);
-        rowHead.setText(head);
-        rowHead.animate().alpha(1f).setDuration(300).start();
+        if (!sameApp || !head.toString().equals(rowHead.getText().toString())) {
+            rowHead.animate().cancel();
+            rowHead.setAlpha(0f);
+            rowHead.setText(head);
+            rowHead.animate().alpha(1f).setDuration(300).start();
+        }
         resetRowScroll();
         for (int i = 0; i < thumbs.size(); i++) {
             FrameLayout t = thumbs.get(i);
@@ -1490,7 +1496,7 @@ public class MainActivity extends Activity {
             t.setFocusable(has);
             if (!has) continue;
             Shelf.Item it = items.get(i);
-            images.into(thumbImage(t), it.art, px(thumbSize[0]) * 2, px(THUMB_R));
+            images.into(thumbImage(t), it.art, px(thumbSize[0]) * 2, px(THUMB_R), sameApp);
             if (it.live && it.title != null && !it.title.isEmpty()) {
                 // đang phát trực tiếp: nhãn đỏ ngắn trước tên video
                 android.text.SpannableStringBuilder lt = new android.text.SpannableStringBuilder("● TRỰC TIẾP  ");

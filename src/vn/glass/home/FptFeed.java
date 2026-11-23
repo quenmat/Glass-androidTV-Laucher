@@ -35,7 +35,16 @@ final class FptFeed {
 
     /** Nạp hàng đã lưu lúc launcher vừa khởi động (chưa có lượt tải nào); lượt tải đầu sẽ thay. */
     static void restore(List<Shelf.Item> l) {
-        synchronized (FptFeed.class) { if (items.isEmpty() && !l.isEmpty()) items = Collections.unmodifiableList(l); }
+        synchronized (FptFeed.class) {
+            if (items.isEmpty() && !l.isEmpty()) items = Collections.unmodifiableList(l);
+            // ô phim (không có giờ đá) của hàng đã lưu: dùng tạm làm danh sách phim cho tới lượt lọc phim đầu tiên,
+            // khỏi để lượt tải trận đầu xoá mất phim (chỉ còn trận) trong lúc chờ lọc lại cả sitemap
+            if (films.isEmpty()) {
+                List<Shelf.Item> fl = new ArrayList<>();
+                for (Shelf.Item it : l) if (it.startAt <= 0) fl.add(it);
+                films = fl;
+            }
+        }
     }
 
     private static final class M { String ev, home, away, homeCode, awayCode, round, slug; long at; boolean live, fav; }
@@ -181,8 +190,13 @@ final class FptFeed {
         long now = System.currentTimeMillis();
         if (filmsAt != 0 && now - filmsAt < FILM_EVERY) return films;
         try {
-            String x = get(SITE + "/sitemap.xml");
-            if (!x.contains("<urlset")) throw new java.io.IOException("sitemap khong dung dang");   // đôi khi trả trang dự phòng
+            // sitemap thỉnh thoảng trả trang dự phòng thay cho XML (lúc được lúc không): thử lại vài lần ngay
+            String x = null;
+            for (int t = 0; t < 3 && (x == null || !x.contains("<urlset")); t++) {
+                if (t > 0) Thread.sleep(3000);
+                try { x = get(SITE + "/sitemap.xml"); } catch (java.io.IOException e) { x = null; }
+            }
+            if (x == null || !x.contains("<urlset")) throw new java.io.IOException("sitemap khong dung dang");
             Matcher m = Pattern.compile("<loc>https://fptplay\\.vn(/[a-z0-9-]+/xem-video/[a-z0-9-]+-[0-9a-f]{24})</loc>").matcher(x);
             List<Film> all = new ArrayList<>();
             java.util.Set<String> seen = new java.util.HashSet<>();
@@ -204,12 +218,13 @@ final class FptFeed {
                 it.intent = "intent://fptplay.vn" + f.path + "#Intent;scheme=https;action=android.intent.action.VIEW;package=" + PKG + ";end";
                 out.add(it);
             }
+            if (out.isEmpty()) throw new java.io.IOException("khong phim nao dat");   // trang phim lỗi hàng loạt: giữ list cũ
             films = out;
             filmsAt = now;
             android.util.Log.i(TAG, "phim=" + all.size() + " chon=" + out.size());
         } catch (Exception e) {
             android.util.Log.i(TAG, "phim loi " + e);
-            filmsAt = now - FILM_EVERY + 30 * 60_000L;   // lỗi: nửa tiếng sau thử lại, giữ danh sách cũ
+            filmsAt = now - FILM_EVERY + 5 * 60_000L;   // lỗi: 5 phút sau thử lại, giữ danh sách cũ
         }
         return films;
     }

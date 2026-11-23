@@ -10,6 +10,7 @@ import android.util.LruCache;
 import android.widget.ImageView;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -64,14 +65,39 @@ final class Images {
 
     private final Map<String, List<Done>> inflight = new HashMap<>();
 
-    /** Nạp vào ImageView, bỏ qua nếu view đã được gán ảnh khác trong lúc chờ. */
-    /** Nạp vào ImageView dưới dạng ảnh bo góc khử răng cưa (RoundImage). */
-    void into(ImageView v, String uri, int reqW, float radius) {
+    /** Nạp vào ImageView dưới dạng ảnh bo góc khử răng cưa (RoundImage), bỏ qua nếu view đã được gán ảnh khác trong lúc chờ. */
+    void into(ImageView v, String uri, int reqW, float radius) { into(v, uri, reqW, radius, false); }
+
+    private static final int SWAP_MS = 700;   // chậm mà êm (chủ máy thích hiệu ứng chậm, mượt hơn nhanh)
+
+    /** keepOld: view đang hiện ảnh khác (hàng của cùng một app vừa tải lại) thì giữ ảnh cũ tới khi ảnh mới sẵn sàng,
+     *  rồi hoà dần ảnh mới đè lên ảnh cũ, thay vì xoá trắng ô. View đang hiện đúng ảnh này thì không làm gì. */
+    void into(ImageView v, String uri, int reqW, float radius, boolean keepOld) {
+        if (uri != null && uri.equals(v.getTag()) && v.getDrawable() != null) {
+            v.animate().cancel(); v.setAlpha(1f); return;
+        }
         v.setTag(uri);
         boolean cached = uri != null && cache.get(uri + "@" + reqW) != null;
-        if (!cached) { v.setImageDrawable(null); v.setAlpha(0f); }
+        boolean hold = keepOld && uri != null && v.getDrawable() != null && v.getAlpha() > 0.99f;
+        if (!hold && !cached) { v.setImageDrawable(null); v.setAlpha(0f); }
         load(uri, reqW, b -> {
             if (uri == null || !uri.equals(v.getTag())) return;
+            if (hold && b != null) {
+                // hoà ảnh mới vào trên ảnh cũ (ảnh cũ mờ đi cùng lúc), xong thì bỏ hẳn ảnh cũ cho nhẹ RAM
+                android.graphics.drawable.Drawable old = v.getDrawable();
+                if (old instanceof android.graphics.drawable.TransitionDrawable)
+                    old = ((android.graphics.drawable.TransitionDrawable) old).getDrawable(1);
+                RoundImage fresh = new RoundImage(b, radius);
+                android.graphics.drawable.TransitionDrawable td =
+                        new android.graphics.drawable.TransitionDrawable(new android.graphics.drawable.Drawable[]{old, fresh});
+                td.setCrossFadeEnabled(true);
+                v.animate().cancel();
+                v.setAlpha(1f);
+                v.setImageDrawable(td);
+                td.startTransition(SWAP_MS);
+                v.postDelayed(() -> { if (v.getDrawable() == td) v.setImageDrawable(fresh); }, SWAP_MS + 50);
+                return;
+            }
             v.setImageDrawable(b == null ? null : new RoundImage(b, radius));
             // ảnh có sẵn thì hiện ngay; ảnh vừa tải xong thì mờ dần vào, không bật "bụp"
             if (cached) v.setAlpha(1f);
@@ -106,7 +132,7 @@ final class Images {
 
     private Bitmap decode(String uri, int reqW) throws Exception {
         if (uri.startsWith(APP)) return appBanner(uri.substring(APP.length()), reqW);
-        byte[] data = readAll(open(uri));
+        byte[] data = uri.startsWith("http") ? fromDisk(uri) : readAll(open(uri));
         BitmapFactory.Options o = new BitmapFactory.Options();
         o.inJustDecodeBounds = true;
         BitmapFactory.decodeByteArray(data, 0, data.length, o);
@@ -124,6 +150,55 @@ final class Images {
             b = r;
         }
         return b;
+    }
+
+    // ---------- bộ đệm ảnh mạng trên ổ đĩa ----------
+    // Bộ đệm RAM bị xả mỗi lần rời màn hình chính (nhường RAM cho app đang xem), và launcher có thể bị hệ thống tắt
+    // hẳn lúc xem app khác. Giữ bản gốc ảnh tải từ mạng trong cacheDir/anh: quay về thì giải mã lại từ ổ (vài chục ms)
+    // thay vì tải lại qua mạng, banner hiện gần như ngay. Tối đa DISK_MAX, đầy thì bỏ ảnh lâu không dùng nhất.
+    private static final long DISK_MAX = 80L * 1024 * 1024;
+    private File diskDir;
+    private final java.util.concurrent.atomic.AtomicInteger diskWrites = new java.util.concurrent.atomic.AtomicInteger();
+
+    private File diskFile(String uri) throws Exception {
+        synchronized (this) { if (diskDir == null) { diskDir = new File(ctx.getCacheDir(), "anh"); diskDir.mkdirs(); } }
+        byte[] h = java.security.MessageDigest.getInstance("SHA-1").digest(uri.getBytes("UTF-8"));
+        StringBuilder sb = new StringBuilder();
+        for (byte x : h) sb.append(String.format("%02x", x));
+        return new File(diskDir, sb.toString());
+    }
+
+    private byte[] fromDisk(String uri) throws Exception {
+        File f = diskFile(uri);
+        if (f.length() > 0) {
+            try {
+                byte[] d = java.nio.file.Files.readAllBytes(f.toPath());
+                f.setLastModified(System.currentTimeMillis());   // vừa dùng: xếp cuối hàng bị bỏ
+                return d;
+            } catch (Exception ignored) {}
+        }
+        byte[] d = readAll(open(uri));
+        File tmp = new File(f.getPath() + "." + Thread.currentThread().getId() + ".tmp");
+        try {
+            java.nio.file.Files.write(tmp.toPath(), d);
+            if (!tmp.renameTo(f)) tmp.delete();
+        } catch (Exception e) { tmp.delete(); }
+        if (diskWrites.getAndIncrement() % 20 == 0) pruneDisk();
+        return d;
+    }
+
+    private synchronized void pruneDisk() {
+        File[] fs = diskDir.listFiles();
+        if (fs == null) return;
+        long total = 0;
+        for (File f : fs) total += f.length();
+        if (total <= DISK_MAX) return;
+        java.util.Arrays.sort(fs, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
+        for (File f : fs) {
+            if (total <= DISK_MAX * 3 / 4) break;
+            total -= f.length();
+            f.delete();
+        }
     }
 
     private InputStream open(String uri) throws Exception {
