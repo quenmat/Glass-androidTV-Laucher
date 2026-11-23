@@ -737,6 +737,7 @@ public class MainActivity extends Activity {
         Bitmap art = own != null ? scaleHQ(own, px(SEL_W), px(SEL_H))
                 : a.key != null ? scaleHQ(asset("cards/" + a.key + ".png"), px(SEL_W), px(SEL_H))
                 : appCard(a.pkg, px(SEL_W), px(SEL_H));
+        art = creamIfWhite(art);
         art = rimIfDark(art);
         int glowColor = a.isAllApps() ? Color.WHITE : Glow.dominant(art);
         // quầng theo đúng ô lúc đang chọn (300x188), kể cả độ bo góc
@@ -804,6 +805,55 @@ public class MainActivity extends Activity {
         float r = px(SEL_R);
         c.drawRoundRect(h, h, out.getWidth() - h, out.getHeight() - h, r - h, r - h, p);
         return out;
+    }
+
+    /**
+     * Ô app nền trắng (YouTube, FPT Play, TV360...) trắng gắt trên kính tối: thay nền trắng bằng trắng ngà như mặt sứ,
+     * dịu hơn trắng tinh (sáng nhất ~93%), chuyển rất nhẹ từ trên xuống, góc trên trái hơi bắt sáng. Không hoa văn.
+     * Logo giữ nguyên màu (điểm ảnh càng trắng càng lấy nền sứ, mép chữ khử răng cưa tự hoà), góc bo giữ đúng kênh
+     * trong suốt của ảnh gốc. Ô nền tối không đổi.
+     */
+    private Bitmap creamIfWhite(Bitmap art) {
+        if (art == null) return null;
+        int w = art.getWidth(), h = art.getHeight();
+        // chỉ ô có viền ngoài gần như trắng tinh
+        int white = 0, n = 0;
+        for (int i = 0; i < 24; i++) {
+            int[] xy = {w * (i + 1) / 26, h / 12, w * (i + 1) / 26, h - 1 - h / 12};
+            for (int k = 0; k < 4; k += 2) {
+                int c = art.getPixel(xy[k], xy[k + 1]);
+                if ((c >>> 24) < 200) continue;
+                n++;
+                if (Math.min(Math.min((c >> 16) & 0xFF, (c >> 8) & 0xFF), c & 0xFF) > 240) white++;
+            }
+        }
+        if (n == 0 || white < n * 0.85f) return art;
+        Bitmap bg = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Canvas cv = new Canvas(bg);
+        Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+        fill.setShader(new android.graphics.LinearGradient(0, 0, 0, h, 0xFFEEEAE2, 0xFFDED8CD, android.graphics.Shader.TileMode.CLAMP));
+        cv.drawRect(0, 0, w, h, fill);
+        fill.setShader(new android.graphics.RadialGradient(w * 0.3f, h * 0.1f, w * 0.62f,
+                new int[]{0x26FFFFFF, 0x0AFFFFFF, 0x00FFFFFF}, new float[]{0f, 0.5f, 1f}, android.graphics.Shader.TileMode.CLAMP));
+        cv.drawRect(0, 0, w, h, fill);
+        int[] src = new int[w * h], back = new int[w * h];
+        art.getPixels(src, 0, w, 0, 0, w, h);
+        bg.getPixels(back, 0, w, 0, 0, w, h);
+        for (int i = 0; i < src.length; i++) {
+            int c = src[i], b = back[i];
+            int r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, bl = c & 0xFF;
+            float k = Math.max(0f, Math.min(1f, (250 - Math.min(Math.min(r, g), bl)) / 70f));   // 0: trắng -> nền kem
+            int rr = Math.round(r * k + ((b >> 16) & 0xFF) * (1 - k));
+            int gg = Math.round(g * k + ((b >> 8) & 0xFF) * (1 - k));
+            int bb = Math.round(bl * k + (b & 0xFF) * (1 - k));
+            src[i] = (c & 0xFF000000) | (rr << 16) | (gg << 8) | bb;
+        }
+        bg.setPixels(src, 0, w, 0, 0, w, h);
+        // giữ trong suốt ở góc bo của ảnh gốc
+        Paint keep = new Paint();
+        keep.setXfermode(new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN));
+        new Canvas(bg).drawBitmap(art, 0, 0, keep);
+        return bg;
     }
 
     private static boolean isOk(int kc) {
