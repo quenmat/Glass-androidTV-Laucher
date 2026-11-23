@@ -77,8 +77,8 @@ final class SettingsPanel extends FrameLayout {
         // mở: kính trượt nhẹ từ trái vào và hiện dần, nền phía sau tối dần
         panel.setAlpha(0f);
         panel.setTranslationX(-px(56));
-        dim.animate().alpha(1f).setDuration(320).setInterpolator(EASE).start();
-        panel.animate().alpha(1f).translationX(0).setDuration(380).setInterpolator(EASE).withLayer().start();
+        dim.animate().alpha(1f).setDuration(440).setInterpolator(EASE).start();
+        panel.animate().alpha(1f).translationX(0).setDuration(520).setInterpolator(EASE).withLayer().start();
         show(mainPage(), null, 0);
     }
 
@@ -101,9 +101,9 @@ final class SettingsPanel extends FrameLayout {
         Runnable gone = () -> { if (getParent() != null) ((ViewGroup) getParent()).removeView(this); };
         h.closed();
         if (!animate) { gone.run(); return; }
-        dim.animate().alpha(0f).setDuration(240).setInterpolator(EASE).start();
-        panel.animate().alpha(0f).translationX(-px(40)).setDuration(240).setInterpolator(EASE).withLayer().withEndAction(gone).start();
-        if (drop != null) drop.animate().alpha(0f).setDuration(200).start();
+        dim.animate().alpha(0f).setDuration(340).setInterpolator(EASE).start();
+        panel.animate().alpha(0f).translationX(-px(40)).setDuration(340).setInterpolator(EASE).withLayer().withEndAction(gone).start();
+        if (drop != null) drop.animate().alpha(0f).setDuration(300).start();
     }
 
     /** Đổi trang: dir 1 = vào mục con (trang cũ lùi sang trái), -1 = quay lại, 0 = trang đầu tiên. */
@@ -113,13 +113,13 @@ final class SettingsPanel extends FrameLayout {
         pageKey = key;
         pages.addView(next, new LayoutParams(-1, -1));
         if (old != null) {
-            old.animate().alpha(0f).translationX(-dir * px(48)).setDuration(200).setInterpolator(EASE).withLayer()
+            old.animate().alpha(0f).translationX(-dir * px(48)).setDuration(280).setInterpolator(EASE).withLayer()
                     .withEndAction(() -> pages.removeView(old)).start();
         }
         if (dir != 0) {
             next.setAlpha(0f);
             next.setTranslationX(dir * px(48));
-            next.animate().alpha(1f).translationX(0).setStartDelay(60).setDuration(300).setInterpolator(EASE).withLayer().start();
+            next.animate().alpha(1f).translationX(0).setStartDelay(80).setDuration(420).setInterpolator(EASE).withLayer().start();
         }
         View first = next.findViewWithTag(dir < 0 && old != null ? old.getTag() : "first");
         if (first == null) first = next.findViewWithTag("first");
@@ -290,8 +290,8 @@ final class SettingsPanel extends FrameLayout {
         t.addView(ring, lr);
         boolean[] armed = {false};
         t.setOnFocusChangeListener((v, has) -> {
-            ring.animate().alpha(has ? 1f : 0f).setDuration(180).setInterpolator(EASE).start();
-            t.animate().scaleX(has ? 1.06f : 1f).scaleY(has ? 1.06f : 1f).setDuration(220).setInterpolator(EASE).start();
+            ring.animate().alpha(has ? 1f : 0f).setDuration(280).setInterpolator(EASE).start();
+            t.animate().scaleX(has ? 1.06f : 1f).scaleY(has ? 1.06f : 1f).setDuration(320).setInterpolator(EASE).start();
             if (!has && armed[0]) { armed[0] = false; ask.animate().alpha(0f).setDuration(160).start(); }
         });
         t.setOnClickListener(v -> {
@@ -479,8 +479,8 @@ final class SettingsPanel extends FrameLayout {
         drop = box;
         dropReturn = back;
         panel.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
-        box.animate().alpha(1f).setDuration(260).setInterpolator(EASE).start();
-        card.animate().scaleX(1f).scaleY(1f).setDuration(320).setInterpolator(EASE).withLayer().start();
+        box.animate().alpha(1f).setDuration(380).setInterpolator(EASE).start();
+        card.animate().scaleX(1f).scaleY(1f).setDuration(460).setInterpolator(EASE).withLayer().start();
         done.requestFocus();
     }
 
@@ -491,7 +491,7 @@ final class SettingsPanel extends FrameLayout {
         if (server != null) { server.stop(); server = null; }
         View d = drop;
         drop = null;
-        d.animate().alpha(0f).setDuration(220).setInterpolator(EASE).withEndAction(() -> removeView(d)).start();
+        d.animate().alpha(0f).setDuration(320).setInterpolator(EASE).withEndAction(() -> removeView(d)).start();
         panel.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
         // dựng lại trang để thấy ảnh vừa gửi; con trỏ về nút "Thêm ảnh"
         if (pageKey != null && !"widgets".equals(pageKey)) {
@@ -614,7 +614,7 @@ final class SettingsPanel extends FrameLayout {
         final TextView fa = ar;
         r.setOnFocusChangeListener((v, has) -> {
             ValueAnimator ha = ValueAnimator.ofInt(hb.getAlpha(), has ? 255 : 0);
-            ha.setDuration(200);
+            ha.setDuration(300);
             ha.setInterpolator(EASE);
             ha.addUpdateListener(an -> hb.setAlpha((int) an.getAnimatedValue()));
             ha.start();
@@ -631,7 +631,7 @@ final class SettingsPanel extends FrameLayout {
         int from = t.getCurrentTextColor() >>> 24;
         if (from == alpha) return;
         ValueAnimator a = ValueAnimator.ofInt(from, alpha);
-        a.setDuration(200);
+        a.setDuration(300);
         a.setInterpolator(EASE);
         a.addUpdateListener(an -> t.setTextColor(ink((int) an.getAnimatedValue())));
         a.start();
@@ -656,12 +656,12 @@ final class SettingsPanel extends FrameLayout {
         wrap.addView(b, lb);
         b.setOnFocusChangeListener((v, has) -> {
             ValueAnimator a = ValueAnimator.ofArgb(has ? 0x1AFFFFFF : 0xEBF2EEE6, has ? 0xEBF2EEE6 : 0x1AFFFFFF);
-            a.setDuration(220);
+            a.setDuration(320);
             a.setInterpolator(EASE);
             a.addUpdateListener(an -> bg.setColor((int) an.getAnimatedValue()));
             a.start();
             b.setTextColor(has ? 0xFF1C1C1E : ink(0xD9));
-            b.animate().scaleX(has ? 1.03f : 1f).scaleY(has ? 1.03f : 1f).setDuration(220).setInterpolator(EASE).start();
+            b.animate().scaleX(has ? 1.03f : 1f).scaleY(has ? 1.03f : 1f).setDuration(320).setInterpolator(EASE).start();
         });
         return wrap;
     }
@@ -715,7 +715,7 @@ final class SettingsPanel extends FrameLayout {
         s.setTag(to);
         if (from != to) {
             ValueAnimator a = ValueAnimator.ofArgb(from, to);
-            a.setDuration(200);
+            a.setDuration(300);
             a.setInterpolator(EASE);
             a.addUpdateListener(an -> f.setColor((int) an.getAnimatedValue()));
             a.start();
@@ -745,7 +745,7 @@ final class SettingsPanel extends FrameLayout {
 
         void lit(boolean on) {
             ValueAnimator a = ValueAnimator.ofFloat(lit, on ? 1f : 0f);
-            a.setDuration(200);
+            a.setDuration(300);
             a.setInterpolator(EASE);
             a.addUpdateListener(an -> { lit = (float) an.getAnimatedValue(); invalidate(); });
             a.start();
@@ -814,7 +814,7 @@ final class SettingsPanel extends FrameLayout {
         void set(boolean v, boolean animate) {
             if (!animate) { on = v ? 1f : 0f; invalidate(); return; }
             ValueAnimator a = ValueAnimator.ofFloat(on, v ? 1f : 0f);
-            a.setDuration(240);
+            a.setDuration(340);
             a.setInterpolator(EASE);
             a.addUpdateListener(an -> { on = (float) an.getAnimatedValue(); invalidate(); });
             a.start();
@@ -844,7 +844,7 @@ final class SettingsPanel extends FrameLayout {
         void set(boolean v, boolean animate) {
             if (!animate) { on = v ? 1f : 0f; invalidate(); return; }
             ValueAnimator a = ValueAnimator.ofFloat(on, v ? 1f : 0f);
-            a.setDuration(260);
+            a.setDuration(380);
             a.setInterpolator(EASE);
             a.addUpdateListener(an -> { on = (float) an.getAnimatedValue(); invalidate(); });
             a.start();

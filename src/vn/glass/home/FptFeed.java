@@ -20,7 +20,7 @@ import java.util.regex.Pattern;
 // dữ liệu cho máy tìm kiếm); banner đọc từ trang sự kiện của từng trận, nhớ lại theo mã trận nên mỗi trận chỉ tải một lần.
 // Hiện mọi trận chưa xong của vòng hiện tại (vòng của trận chưa xong sớm nhất); trận xong thì bỏ.
 // Xếp: đang đá trước, rồi theo giờ; cùng giờ thì trận có đội yêu thích (thẻ EPL) đứng trước.
-// Ít hơn 5 trận thì lấp cho đủ 5 ô bằng phim đáng chú ý (xem phần "phim đáng chú ý" bên dưới).
+// Ít hơn 10 trận thì lấp cho đủ 10 ô bằng phim đáng chú ý (xem phần "phim đáng chú ý" bên dưới).
 final class FptFeed {
     static final String PKG = "net.fptplay.ottbox";
     private static final String SITE = "https://fptplay.vn";
@@ -177,8 +177,8 @@ final class FptFeed {
     // ảnh ngang đã in tên phim). Nửa ngày lọc lại một lần: phim mới phát hành trước, cùng năm thì điểm cao trước
     // (điểm có trọng số theo số lượt chấm, bỏ phim quá ít lượt hoặc điểm thấp).
 
-    private static final int FILM_N = 6;
-    private static final int MIN_ROW = 5;   // hàng luôn có ít nhất chừng này ô (trận trước, thiếu thì lấp bằng phim)
+    private static final int FILM_N = 10;
+    private static final int MIN_ROW = 10;   // hàng luôn có ít nhất chừng này ô (trận trước, thiếu thì lấp bằng phim)
     private static final long FILM_EVERY = 12 * 3600_000L;
     private static long filmsAt;
     private static List<Shelf.Item> films = Collections.emptyList();

@@ -101,7 +101,7 @@ final class Images {
             v.setImageDrawable(b == null ? null : new RoundImage(b, radius));
             // ảnh có sẵn thì hiện ngay; ảnh vừa tải xong thì mờ dần vào, không bật "bụp"
             if (cached) v.setAlpha(1f);
-            else v.animate().alpha(1f).setDuration(260).start();
+            else v.animate().alpha(1f).setDuration(450).start();
         });
     }
 

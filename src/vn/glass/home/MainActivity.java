@@ -82,10 +82,11 @@ public class MainActivity extends Activity {
     private static final int GRID_W = 1842, GRID_PAD = 30;
     // hàng nội dung: 5 ô 16:9 (332x187), bề ngang tính theo dock (xem buildShelf). Hàng nằm TRÊN dock, cách mép trên khay
     // ROW_GAP: đủ chỗ cho ô phim đang chọn phóng to (lấn xuống ~23px) mà không chạm ô app bên dưới
-    // SHELF_N: số ô vừa một màn (định cỡ ô); ROW_MAX: số ô tối đa của hàng, dư thì hàng cuộn ngang theo ô đang chọn
-    private static final int SHELF_N = 5, ROW_MAX = 12, THUMB_GAP = 30, ROW_GAP = 40, ROW_TOP = 614 - ROW_GAP - 187;
+    // SHELF_N: số ô vừa một màn (định cỡ ô); ROW_N: số ô thường của một hàng (dư SHELF_N thì hàng cuộn ngang theo ô
+    // đang chọn); ROW_MAX: số ô tối đa (FPT, TV360: đủ mọi trận của vòng)
+    private static final int SHELF_N = 5, ROW_N = 10, ROW_MAX = 12, THUMB_GAP = 30, ROW_GAP = 40, ROW_TOP = 614 - ROW_GAP - 187;
     private final int[] thumbSize = new int[2];
-    private static final float ROW_IDLE_ALPHA = 0.55f, THUMB_R = 12;   // hàng lúc đang ở dock: trong hơn để nền và dock nổi
+    private static final float ROW_IDLE_ALPHA = 0.80f, THUMB_R = 12;   // hàng lúc đang ở dock: trong hơn để nền và dock nổi
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private Images images;
@@ -324,14 +325,31 @@ public class MainActivity extends Activity {
         }
         sideBmp.recycle();
 
-        clock = text(600, 34, 0xD1FFFFFF);
-        clock.setShadowLayer(px(4), 0, px(1), 0x40000000);   // đồng hồ nằm trên ảnh sáng: bóng rất mỏng, rất nhạt
-        FrameLayout.LayoutParams lc = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END);
-        // đồng hồ thẳng mép phải khay dock
-        int trayWDesign = GRID_W;
-        lc.setMargins(0, px(46), px((1920 - trayWDesign) / 2f), 0);
+        // lớp tối rất nhẹ ở mép trên (đậm nhất sát mép, tan hết trước giữa thẻ): giờ chữ trần không bị lẫn vào ảnh nền
+        // sáng mà vẫn không thành dải tối rõ. Vẽ sẵn có nhiễu chống sọc (Dither), lật ngược lớp "tối dần từ dưới lên"
+        View topScrim = new View(this);
+        topScrim.setBackground(new android.graphics.drawable.BitmapDrawable(getResources(),
+                Dither.fadeUp(dsw, px(240), new int[]{0x52, 0x24, 0x08, 0x00})));
+        topScrim.setScaleY(-1f);
+        root.addView(topScrim, new FrameLayout.LayoutParams(-1, px(240), Gravity.TOP));
+
+        // đồng hồ + nút Cài đặt thành một cụm chữ trần ở giữa phía trên (hai góc trên nhường cho thẻ lịch, thẻ giá):
+        // giờ chữ tròn Quicksand như màn hình khoá, bánh răng nét kiểu Apple đứng ngay sau giờ
+        clock = text(500, CLOCK_SIZE, 0xB3FAF6EE);   // kem ấm ~70%: dịu như chữ màn hình khoá, không trắng gắt
+        clock.setTypeface(roundFont(500));
+        clock.setLetterSpacing(0f);
+        clock.setGravity(Gravity.CENTER);
+        clock.setShadowLayer(px(8), 0, px(1), 0x2E000000);   // chữ trần trên ảnh: bóng rất nhạt, nhoè rộng, chỉ đủ tách khỏi nền sáng
+        // bề rộng cố định theo chuỗi rộng nhất: chữ số Quicksand không đều nhau, khung tự co giãn thì giờ xê dịch theo phút
+        int clockW = (int) Math.ceil(clock.getPaint().measureText("00:00") * 1.06f);
+        // mặc định chỉ có giờ, đứng chính giữa; nút Cài đặt ẩn ngay sau giờ. Chọn nút (từ thẻ lịch bấm phải) thì giờ
+        // dạt trái nửa bề rộng nút để cả cụm giờ + nút vẫn ở chính giữa, nút hiện dần ra
+        clockShift = (px(CLOCK_GAP) + px(GEAR)) / 2f;
+        int clockLeft = (px(1920) - clockW) / 2;
+        FrameLayout.LayoutParams lc = new FrameLayout.LayoutParams(clockW, px(GEAR), Gravity.TOP | Gravity.START);
+        lc.setMargins(clockLeft, px(TOP_Y), 0, 0);
         root.addView(clock, lc);
-        buildGear((1920 - trayWDesign) / 2f);
+        buildGear(Math.round(clockLeft - clockShift) + clockW + px(CLOCK_GAP));
 
         buildTicker();       // cột giá BTC, ETH, vàng dưới đồng hồ, cùng chất kính với dock
         buildEpl();          // thẻ lịch Ngoại hạng Anh bên trái, kính đậm
@@ -342,38 +360,45 @@ public class MainActivity extends Activity {
         setLift(px(DOCK_DROP), false);   // mặc định đứng ở dock: cả cụm hạ thấp
     }
 
-    // ---------- nút Cài đặt: bánh răng tròn ở góc trên trái, thẳng mép trái khay ----------
+    // ---------- nút Cài đặt: bánh răng nét kiểu Apple, đứng ngay sau đồng hồ ở giữa phía trên ----------
 
     private static final int GEAR = 60;
+    private static final int TOP_Y = 36;          // mép trên của hàng trên cùng (cụm giờ, thẻ lịch, thẻ giá)
+    private static final int CLOCK_SIZE = 42, CLOCK_GAP = 14;
     private FrameLayout gear;
+    private float clockShift;   // giờ dạt trái chừng này khi nút Cài đặt hiện ra
 
-    private void buildGear(float left) {
+    /** left: toạ độ điểm ảnh thật (đã nhân tỉ lệ màn hình), chỗ của nút khi đã hiện (giờ đã dạt trái). */
+    private void buildGear(int left) {
         gear = new FrameLayout(this);
         gear.setFocusable(true);
         gear.setFocusableInTouchMode(true);
+        // nút ẩn hẳn khi không được chọn (vẫn nhận được lựa chọn); chọn thì hiện thành nút tròn trắng đặc, biểu tượng
+        // tối, như nút Apple TV
         GradientDrawable dot = new GradientDrawable();
         dot.setShape(GradientDrawable.OVAL);
-        dot.setColor(0x47000000);   // cùng độ tối với kính ô giá
+        dot.setColor(0xF2FFFFFF);
         gear.setBackground(dot);
         ImageView ic = new ImageView(this);
-        ic.setImageBitmap(scaleHQ(asset("icons/gear.png"), px(GEAR * 0.56f * 1.15f), px(GEAR * 0.56f * 1.15f)));
-        ic.setColorFilter(0xF0FFFFFF);
+        ic.setImageDrawable(new GearIcon());   // vẽ vector: mép sắc ở mọi cỡ, kể cả lúc nút phóng to
+        ic.setColorFilter(0xFF1C1C1E);
         FrameLayout.LayoutParams li = new FrameLayout.LayoutParams(px(GEAR * 0.56f), px(GEAR * 0.56f), Gravity.CENTER);
         gear.addView(ic, li);
-        // chọn: như nút Apple TV, nền trắng đặc, biểu tượng tối, nổi nhẹ
+        gear.setAlpha(0f);
+        gear.setScaleX(0.8f); gear.setScaleY(0.8f);
+        // chọn: giờ dạt trái êm, nút nở ra từ chỗ giờ vừa nhường (chậm, mượt); bỏ chọn: nút thu lại tắt dần, giờ về giữa
         gear.setOnFocusChangeListener((v, has) -> {
             dimGlow(has || inShelf);   // rời xuống hàng thumb: quầng ô app vẫn tắt như lúc vào hàng từ dock
-            ValueAnimator c = ValueAnimator.ofArgb(has ? 0x47000000 : 0xF2FFFFFF, has ? 0xF2FFFFFF : 0x47000000);
-            c.setDuration(220);
-            c.addUpdateListener(an -> dot.setColor((int) an.getAnimatedValue()));
-            c.start();
-            ic.setColorFilter(has ? 0xFF1C1C1E : 0xF0FFFFFF);
-            gear.animate().scaleX(has ? 1.15f : 1f).scaleY(has ? 1.15f : 1f).setInterpolator(EASE).setDuration(260).start();
+            clock.animate().cancel();
+            clock.animate().translationX(has ? -clockShift : 0f).setInterpolator(EASE).setDuration(560).start();
+            gear.animate().cancel();
+            gear.animate().alpha(has ? 1f : 0f).scaleX(has ? 1.1f : 0.8f).scaleY(has ? 1.1f : 0.8f)
+                    .setStartDelay(has ? 90 : 0).setInterpolator(EASE).setDuration(has ? 520 : 380).start();
         });
         gear.setOnClickListener(v -> openSettings());
         gear.setOnLongClickListener(v -> { openSystemSettings(); return true; });
         FrameLayout.LayoutParams lg = new FrameLayout.LayoutParams(px(GEAR), px(GEAR), Gravity.TOP | Gravity.START);
-        lg.setMargins(px(left), px(36), 0, 0);   // giữa theo chiều dọc với đồng hồ
+        lg.setMargins(left, px(TOP_Y), 0, 0);   // cùng hàng, cùng chiều cao với đồng hồ
         root.addView(gear, lg);
     }
 
@@ -416,6 +441,7 @@ public class MainActivity extends Activity {
         Bitmap art = own != null ? scaleHQ(own, px(SEL_W), px(SEL_H))
                 : a.key != null ? scaleHQ(asset("cards/" + a.key + ".png"), px(SEL_W), px(SEL_H))
                 : appCard(a.pkg, px(SEL_W), px(SEL_H));
+        art = rimIfDark(art);
         int glowColor = a.isAllApps() ? Color.WHITE : Glow.dominant(art);
         // quầng theo đúng ô lúc đang chọn (300x188), kể cả độ bo góc
         glowBitmaps.add(Glow.make(px(SEL_W), px(SEL_H), px(SEL_R), px(GLOW_SPREAD), glowColor));
@@ -453,6 +479,37 @@ public class MainActivity extends Activity {
         return cell;
     }
 
+    /**
+     * Ô app nền tối (Netflix, iQIYI, Truyền hình, Apps) hoà vào kính dock tối, chỉ còn logo trôi: vẽ sẵn vào ảnh ô một
+     * mép kính bắt sáng kiểu Apple TV, sáng ở góc trên trái rồi tắt dần (không viền đều quanh ô), theo đúng góc bo
+     * của ảnh. Vẽ vào ảnh nên phóng/thu cùng ô, không thêm lớp vẽ nào. Ô nền sáng giữ nguyên.
+     */
+    private Bitmap rimIfDark(Bitmap art) {
+        if (art == null) return null;
+        Bitmap s = Bitmap.createScaledBitmap(art, 24, 15, true);
+        double sum = 0; int n = 0;
+        for (int y = 0; y < s.getHeight(); y++)
+            for (int x = 0; x < s.getWidth(); x++) {
+                int c = s.getPixel(x, y);
+                if ((c >>> 24) < 128) continue;   // góc bo trong suốt
+                sum += FrostView.glare(c); n++;
+            }
+        if (s != art) s.recycle();
+        if (n == 0 || sum / n / 255.0 > 0.30) return art;
+        Bitmap out = art.isMutable() ? art : art.copy(Bitmap.Config.ARGB_8888, true);
+        android.graphics.Canvas c = new android.graphics.Canvas(out);
+        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        p.setStyle(Paint.Style.STROKE);
+        float w = Math.max(1.5f, out.getWidth() / 180f), h = w / 2f;
+        p.setStrokeWidth(w);
+        p.setShader(new android.graphics.LinearGradient(0, 0, out.getWidth() * 0.7f, out.getHeight(),
+                new int[]{0x2EFFFFFF, 0x0AFFFFFF, 0x03FFFFFF}, new float[]{0f, 0.45f, 1f},
+                android.graphics.Shader.TileMode.CLAMP));
+        float r = px(SEL_R);
+        c.drawRoundRect(h, h, out.getWidth() - h, out.getHeight() - h, r - h, r - h, p);
+        return out;
+    }
+
     private static boolean isOk(int kc) {
         return kc == KeyEvent.KEYCODE_DPAD_CENTER || kc == KeyEvent.KEYCODE_ENTER || kc == KeyEvent.KEYCODE_NUMPAD_ENTER;
     }
@@ -461,7 +518,7 @@ public class MainActivity extends Activity {
     private void press(View img, View sheen) {
         for (View v : new View[]{img, sheen}) {
             v.animate().cancel();
-            v.animate().scaleX(1.07f).scaleY(1.07f).translationZ(px(10)).setInterpolator(EASE).setDuration(110).start();
+            v.animate().scaleX(1.07f).scaleY(1.07f).translationZ(px(10)).setInterpolator(EASE).setDuration(150).start();
         }
     }
 
@@ -470,7 +527,7 @@ public class MainActivity extends Activity {
         for (View v : new View[]{img, sheen}) {
             v.animate().cancel();
             v.animate().scaleX(SCALE_X).scaleY(SCALE_Y).translationZ(px(30))
-                    .setInterpolator(new OvershootInterpolator(2.2f)).setDuration(260).start();
+                    .setInterpolator(EASE).setDuration(420).start();
         }
     }
 
@@ -481,8 +538,8 @@ public class MainActivity extends Activity {
         ImageView g = glowViews[glowCur];
         g.animate().cancel();
         // loé sáng bằng độ sáng (không phình to: lỗ khoét phải khít mép ô)
-        g.animate().alpha(1f).setDuration(140).setInterpolator(EASE)
-                .withEndAction(() -> g.animate().alpha(GLOW_MOVING).setDuration(420).setInterpolator(EASE)
+        g.animate().alpha(1f).setDuration(200).setInterpolator(EASE)
+                .withEndAction(() -> g.animate().alpha(GLOW_MOVING).setDuration(600).setInterpolator(EASE)
                         .withEndAction(() -> startBreathing(g)).start()).start();
     }
 
@@ -500,13 +557,13 @@ public class MainActivity extends Activity {
     private void lift(View img, View sheen, boolean on) {
         float sx = on ? SCALE_X : 1f, sy = on ? SCALE_Y : 1f;
         img.animate().cancel(); sheen.animate().cancel();
-        android.view.animation.Interpolator in = on ? new OvershootInterpolator(0.8f) : EASE;
+        android.view.animation.Interpolator in = EASE;
         // độ mờ đi cùng nhịp phóng/thu: cancel() ở trên cắt ngang lần mờ/sáng của shelfState, phải đặt lại đích ở đây
         // (ô đang chọn luôn sáng; ô thôi chọn mờ 0,6 nếu đang ở hàng thumb), không thì ô kẹt ở độ mờ dở dang
         img.animate().scaleX(sx).scaleY(sy).translationZ(on ? px(30) : 0).alpha(on || !inShelf ? 1f : 0.6f)
-                .setInterpolator(in).setDuration(on ? 360 : 420).start();
+                .setInterpolator(in).setDuration(on ? 500 : 520).start();
         sheen.animate().scaleX(sx).scaleY(sy).translationZ(on ? px(31) : 0).alpha(on ? 1f : 0f)
-                .setInterpolator(in).setDuration(on ? 360 : 380).start();
+                .setInterpolator(in).setDuration(on ? 500 : 480).start();
     }
 
     // ---------- kính mờ: ảnh nền nhoè mạnh, cắt đúng hình khay, bo góc khử răng cưa ----------
@@ -550,7 +607,7 @@ public class MainActivity extends Activity {
     // ---------- ô giá BTC + vàng (chỉ để theo dõi) ----------
 
     // một thẻ kính chung (cùng kiểu thẻ lịch bên trái): 3 dòng BTC, ETH, vàng cao TICK_H, ngăn bằng vạch mảnh
-    private static final int TICK_W = 236, TICK_H = 88, TICK_GAP = 0, TICK_PAD = 20, TICK_TOP = 116, TICK_CARD_PAD = 4;
+    private static final int TICK_W = 236, TICK_H = 88, TICK_GAP = 0, TICK_PAD = 20, TICK_TOP = 40, TICK_CARD_PAD = 4;
     private FrameLayout tickCard;
     private final View[] tickLine = new View[3];
     private ValueAnimator tickCardAnim;
@@ -568,7 +625,7 @@ public class MainActivity extends Activity {
 
     // ---------- lịch Ngoại hạng Anh: thẻ kính đậm bên trái, dưới nút Cài đặt ----------
 
-    private static final int EPL_X = 40, EPL_TOP = 116;
+    private static final int EPL_X = 40, EPL_TOP = 40;   // sát mép trên: giờ + Cài đặt đã ra giữa, hai góc trên trống
     private FrameLayout eplBox;
     private FrostView eplFrost;
     private EplView eplView;
@@ -602,7 +659,7 @@ public class MainActivity extends Activity {
         // chỉ cho chọn khi đi từ nút bánh răng xuống (xem dispatchKeyEvent): bảng Cài đặt, hộp nhắc không lỡ trỏ vào
         eplBox.setOnFocusChangeListener((v, has) -> {
             if (!has) {
-                ring.animate().alpha(0f).setDuration(200).setInterpolator(EASE).start();
+                ring.animate().alpha(0f).setDuration(300).setInterpolator(EASE).start();
                 eplView.setSelected(EplView.SEL_NONE);
                 eplBox.setFocusable(false);
             }
@@ -642,7 +699,7 @@ public class MainActivity extends Activity {
                         if (eplBox.getVisibility() != View.VISIBLE && Wallpapers.widget(MainActivity.this, "epl")) {
                             eplBox.setAlpha(0f);
                             eplBox.setVisibility(View.VISIBLE);
-                            eplBox.animate().alpha(eplShelfAlpha()).setDuration(400).start();
+                            eplBox.animate().alpha(eplShelfAlpha()).setDuration(500).start();
                         }
                         syncRowWithEpl();
                         long nk = d.nextKick(now);
@@ -729,6 +786,13 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** Khu của thẻ gọn ứng với bản đầy đủ vừa thu về (khu đó không còn thì theo thứ tự thường). */
+    private int backPart(int fromMode) {
+        if (fromMode == EplView.TABLE && eplView.hasTablePart()) return EplView.SEL_TABLE;
+        if (fromMode == EplView.FIXTURES && eplView.hasMatchPart()) return EplView.SEL_MATCH;
+        return eplPart(false);
+    }
+
     /** Thẻ gọn có khu nào để chọn: từ dưới lên ưu tiên bảng xếp hạng, từ trên xuống ưu tiên lịch. */
     private int eplPart(boolean fromBelow) {
         boolean m = eplView.hasMatchPart(), t = eplView.hasTablePart();
@@ -741,26 +805,29 @@ public class MainActivity extends Activity {
         eplBox.setFocusable(true);
         eplBox.requestFocus();
         if (eplView.mode() == EplView.COMPACT) eplView.setSelected(eplPart(fromBelow));
-        eplRing.animate().alpha(eplView.mode() == EplView.COMPACT ? 0f : 1f).setDuration(200).setInterpolator(EASE).start();
+        eplRing.animate().alpha(eplView.mode() == EplView.COMPACT ? 0f : 1f).setDuration(300).setInterpolator(EASE).start();
     }
 
     /** Đổi chế độ thẻ: chữ mờ đi, khung kính co giãn cả ngang lẫn dọc tới cỡ mới, chữ mới hiện dần. */
     private void swapEpl(int to) {
         if (eplView.mode() == to) return;
+        // thu về bản gọn: chọn lại đúng khu vừa mở (bảng xếp hạng đầy đủ -> khu bảng, lịch đầy đủ -> khu lịch),
+        // không nhảy về khu lịch theo thứ tự mặc định
+        int from = eplView.mode();
         eplView.animate().cancel();
-        eplView.animate().alpha(0f).setDuration(240).setInterpolator(EASE).withEndAction(() -> {
+        eplView.animate().alpha(0f).setDuration(340).setInterpolator(EASE).withEndAction(() -> {
             ViewGroup.LayoutParams cur = eplBox.getLayoutParams();
             int w0 = cur.width > 0 ? cur.width : eplBox.getWidth(), h0 = cur.height > 0 ? cur.height : eplBox.getHeight();
             eplView.setMode(to);
             syncRowWithEpl();
             if (eplBox.hasFocus()) {
-                eplRing.animate().alpha(to == EplView.COMPACT ? 0f : 1f).setDuration(200).start();
-                eplView.setSelected(to == EplView.COMPACT ? eplPart(false) : EplView.SEL_NONE);
+                eplRing.animate().alpha(to == EplView.COMPACT ? 0f : 1f).setDuration(300).start();
+                eplView.setSelected(to == EplView.COMPACT ? backPart(from) : EplView.SEL_NONE);
             }
             int w1 = px(eplView.designWidth()), h1 = px(eplView.designHeight());
             if (eplResize != null) eplResize.cancel();
             eplResize = ValueAnimator.ofFloat(0f, 1f);
-            eplResize.setDuration(440);
+            eplResize.setDuration(560);
             eplResize.setInterpolator(EASE);
             eplResize.addUpdateListener(a -> {
                 float f = (float) a.getAnimatedValue();
@@ -770,7 +837,7 @@ public class MainActivity extends Activity {
                 eplBox.setLayoutParams(lb);
             });
             eplResize.start();
-            eplView.animate().alpha(1f).setStartDelay(180).setDuration(360).setInterpolator(EASE).start();
+            eplView.animate().alpha(1f).setStartDelay(180).setDuration(480).setInterpolator(EASE).start();
         }).start();
     }
 
@@ -790,12 +857,12 @@ public class MainActivity extends Activity {
         // cả hàng chỉ 1 hoặc 0 (nhường thẻ lịch); mờ nhẹ lúc đứng ở dock làm ở từng ô (ô có lớp đệm), không làm cả hàng:
         // đổi alpha cả hàng bắt GPU vẽ cả hàng ra lớp tạm mỗi khung, lúc từ dock bấm lên ô nở bị khựng
         float a = inShelf || !eplCoversRow() ? 1f : 0f;
-        if (shelfRow.getAlpha() != a) shelfRow.animate().alpha(a).setDuration(220).start();
+        if (shelfRow.getAlpha() != a) shelfRow.animate().alpha(a).setDuration(360).start();
         // thẻ bóng đá: ở hàng thumb chỉ ẩn khi đang mở dạng đầy đủ (dài xuống chạm hàng); dạng gọn không che gì nên giữ nguyên
         // (đang bị tắt hay đang mờ dần để ẩn hẳn thì thôi, kẻo cắt ngang lần ẩn)
         if (eplBox != null && settings == null && eplBox.getVisibility() == View.VISIBLE && Wallpapers.widget(this, "epl")) {
             float ea = eplShelfAlpha();
-            if (eplBox.getAlpha() != ea) eplBox.animate().alpha(ea).setDuration(220).withLayer().start();
+            if (eplBox.getAlpha() != ea) eplBox.animate().alpha(ea).setDuration(360).withLayer().start();
         }
     }
 
@@ -925,7 +992,7 @@ public class MainActivity extends Activity {
         if (lastCoin[i] >= 0 && b.price != lastCoin[i]) {
             tickPrice[i].animate().cancel();
             tickPrice[i].setAlpha(0.45f);
-            tickPrice[i].animate().alpha(1f).setDuration(420).setInterpolator(EASE).start();
+            tickPrice[i].animate().alpha(1f).setDuration(560).setInterpolator(EASE).start();
         }
         lastCoin[i] = b.price;
         lastChg[i] = b.changePct;
@@ -948,8 +1015,8 @@ public class MainActivity extends Activity {
     private void markStale() {
         long now = System.currentTimeMillis();
         float coin = btcOkAt > 0 && now - btcOkAt < 30_000 ? 1f : 0.5f;
-        for (int i = 0; i < GOLD; i++) tickTile[i].animate().alpha(coin).setDuration(300).start();
-        tickTile[GOLD].animate().alpha(goldOkAt > 0 && now - goldOkAt < 2 * 3600_000 ? 1f : 0.5f).setDuration(300).start();
+        for (int i = 0; i < GOLD; i++) tickTile[i].animate().alpha(coin).setDuration(420).start();
+        tickTile[GOLD].animate().alpha(goldOkAt > 0 && now - goldOkAt < 2 * 3600_000 ? 1f : 0.5f).setDuration(420).start();
     }
 
     // ---------- quầng sáng: một lớp riêng nằm dưới khay kính, trượt theo ô đang chọn ----------
@@ -986,7 +1053,7 @@ public class MainActivity extends Activity {
         dockLift = target;
         if (!animate) { applyLift(target); return; }
         liftAnim = ValueAnimator.ofFloat(tray.getTranslationY(), target);
-        liftAnim.setDuration(420);
+        liftAnim.setDuration(560);
         liftAnim.setInterpolator(EASE);
         liftAnim.addUpdateListener(an -> applyLift((float) an.getAnimatedValue()));
         liftAnim.start();
@@ -1014,7 +1081,7 @@ public class MainActivity extends Activity {
         if (target == dockShift) return;
         if (dockAnim != null) dockAnim.cancel();
         dockAnim = ValueAnimator.ofFloat(tray.getTranslationX(), target);
-        dockAnim.setDuration(380);
+        dockAnim.setDuration(520);
         dockAnim.setInterpolator(EASE);
         dockAnim.addUpdateListener(an -> {
             float s = (float) an.getAnimatedValue();
@@ -1043,12 +1110,12 @@ public class MainActivity extends Activity {
             if (cur != null && cur.getAlpha() > 0.05f) { next.setX(cur.getX()); next.setY(cur.getY()); }
             else { next.setX(x); next.setY(y); }
             next.setScaleX(1f); next.setScaleY(1f);   // không co giãn: lỗ khoét luôn khít mép ô
-            next.animate().x(x).y(y).alpha(GLOW_MOVING).setDuration(380)
+            next.animate().x(x).y(y).alpha(GLOW_MOVING).setDuration(520)
                     .setInterpolator(EASE)
                     .withEndAction(() -> startBreathing(next)).start();
             if (cur != null) {
                 cur.animate().cancel();
-                cur.animate().x(x).y(y).alpha(0f).setDuration(380).setInterpolator(EASE).start();
+                cur.animate().x(x).y(y).alpha(0f).setDuration(520).setInterpolator(EASE).start();
             }
             glowCur = nextIdx;
         });
@@ -1089,7 +1156,7 @@ public class MainActivity extends Activity {
         if (breathe != null) { breathe.cancel(); breathe = null; }
         ImageView g = glowViews[glowCur];
         g.animate().cancel();
-        g.animate().alpha(dim ? 0f : GLOW_MOVING).scaleX(1f).scaleY(1f).setDuration(240)
+        g.animate().alpha(dim ? 0f : GLOW_MOVING).scaleX(1f).scaleY(1f).setDuration(360)
                 .withEndAction(() -> { if (!dim) startBreathing(g); }).start();
     }
 
@@ -1130,7 +1197,10 @@ public class MainActivity extends Activity {
 
     // ô phim đang chọn to thêm đúng 80x45 điểm ảnh (332x187 -> 412x232, ~124%, vẫn 16:9): mép rơi đúng điểm ảnh.
     // Mỗi bên lấn 40 > khe 30, nên các ô hai bên dạt ra 40 (spreadThumbs) để vẫn hở đúng khe 30, không ô nào đè ô nào.
-    private static final int THUMB_GROW_W = 80, THUMB_GROW_H = 45;
+    // Cả hai số phải chẵn: ô nở đều từ tâm nên mỗi mép nhích ra nửa số này. 45 làm mép trên rơi vào nửa điểm ảnh
+    // (lệch 22,5): lúc phóng còn vẽ qua lớp đệm thì mép mịn, phóng xong vẽ thẳng thì hàng điểm ảnh dở dang ở mép trên
+    // lộ nền xám của ô thành một mảnh sáng tự hiện ra sau khi phóng. 46: lệch đúng 23, mép rơi đúng điểm ảnh.
+    private static final int THUMB_GROW_W = 80, THUMB_GROW_H = 46;
     private float thumbScaleX() { return (px(thumbSize[0]) + px(THUMB_GROW_W)) / (float) px(thumbSize[0]); }
     private float thumbScaleY() { return (px(thumbSize[1]) + px(THUMB_GROW_H)) / (float) px(thumbSize[1]); }
 
@@ -1141,7 +1211,7 @@ public class MainActivity extends Activity {
             float x = sel < 0 || j == sel ? 0 : j < sel ? -d : d;
             FrameLayout t = thumbs.get(j);
             if (t.getTranslationX() == x) continue;
-            t.animate().translationX(x).setStartDelay(0).setInterpolator(EASE).setDuration(300).withLayer().start();
+            t.animate().translationX(x).setStartDelay(0).setInterpolator(EASE).setDuration(440).withLayer().start();
         }
     }
 
@@ -1157,7 +1227,7 @@ public class MainActivity extends Activity {
         if (first == rowFirst) return;
         rowFirst = first;
         float x = -first * px(thumbSize[0] + THUMB_GAP);
-        shelfRow.animate().translationX(x).setInterpolator(EASE).setDuration(300).start();
+        shelfRow.animate().translationX(x).setInterpolator(EASE).setDuration(440).start();
     }
 
     private void resetRowScroll() {
@@ -1166,7 +1236,7 @@ public class MainActivity extends Activity {
         shelfRow.setTranslationX(0);
     }
 
-    private static final float THUMB_DIM = 0.45f;   // ô phim không được chọn khi đang ở hàng nội dung
+    private static final float THUMB_DIM = 0.68f;   // ô phim không được chọn khi đang ở hàng nội dung (trong quá thì ảnh nền xuyên qua, nhìn loá)
 
     // ---------- xem trước kênh ngay trên ô thumb (hàng của ô Truyền hình) ----------
     // Đứng yên trên ô kênh 0,3 giây (ô đã phóng to xong) thì một khung đúng cỡ ô đã phóng đè lên: dưới cùng là SurfaceView
@@ -1208,7 +1278,7 @@ public class MainActivity extends Activity {
                 thumbPrev = TvPreview.start(MainActivity.this, ch.url, hd.getSurface(), new TvPreview.Listener() {
                     @Override public void onFirstFrame() {
                         if (thumbPrevBox != box) return;
-                        thumbPrevArt.animate().alpha(0f).setDuration(260).setInterpolator(EASE).start();
+                        thumbPrevArt.animate().alpha(0f).setDuration(400).setInterpolator(EASE).start();
                     }
                     @Override public void onFailed() { if (thumbPrevBox == box) stopThumbPreview(false); }
                 });
@@ -1321,22 +1391,22 @@ public class MainActivity extends Activity {
                     // vẽ ô thành một lớp đệm suốt lúc phóng/thu: mỗi khung chỉ ghép lại tấm ảnh có sẵn, không vẽ lại ảnh
                     // lớn, dải tối, chữ (GPU box đã ~15ms/khung, vẽ lại ô là trễ khung, ô nở trông khựng)
                     .withLayer()
-                    .setInterpolator(EASE).setDuration(has ? 300 : 260).start();
-            thumbGloss((FrameLayout) v).focus(has, wait);
+                    .setInterpolator(EASE).setDuration(has ? 440 : 380).start();
+            thumbGloss((FrameLayout) v).focus(has, wait, has ? 440 : 380);   // cùng nhịp, cùng đường cong với ô phóng/thu
             if (has) { scrollRowTo(i); spreadThumbs(i); scheduleThumbPreview(i); }
         });
         // nhấn: lún nhẹ ngay; thả: phồng lại đúng cỡ chọn rồi mở nội dung, cửa sổ phóng ra từ ô này
         t.setOnKeyListener((v, kc, ev) -> {
             if (isOk(kc) && ev.getAction() == KeyEvent.ACTION_DOWN && ev.getRepeatCount() == 0) {
                 v.animate().cancel();
-                v.animate().scaleX(1.03f).scaleY(1.03f).setInterpolator(EASE).setDuration(110).start();
+                v.animate().scaleX(1.03f).scaleY(1.03f).setInterpolator(EASE).setDuration(150).start();
             }
             return false;
         });
         t.setOnClickListener(v -> {
             stopThumbPreview(false);
             v.animate().cancel();
-            v.animate().scaleX(thumbScaleX()).scaleY(thumbScaleY()).setInterpolator(EASE).setDuration(200).start();
+            v.animate().scaleX(thumbScaleX()).scaleY(thumbScaleY()).setInterpolator(EASE).setDuration(300).start();
             openItem(i, v);
         });
         return t;
@@ -1468,8 +1538,8 @@ public class MainActivity extends Activity {
 
         List<Shelf.Item> own = itemsOf(a);
         List<Shelf.Item> items = new ArrayList<>();
-        // FPT Play: đủ mọi trận của vòng (hàng cuộn); app khác giữ một màn SHELF_N ô như cũ
-        int cap = FptFeed.PKG.equals(a.pkg) || Tv360Feed.PKG.equals(a.pkg) ? ROW_MAX : SHELF_N;
+        // FPT Play: đủ mọi trận của vòng (hàng cuộn); app khác tối đa ROW_N ô
+        int cap = FptFeed.PKG.equals(a.pkg) || Tv360Feed.PKG.equals(a.pkg) ? ROW_MAX : ROW_N;
         for (Shelf.Item it : own) { if (items.size() < cap) items.add(it); }
         // hàng chỉ có nội dung của chính app đang chọn; app không có nội dung thì hàng để trống (không mượn app khác)
         boolean mixed = false;
@@ -1485,7 +1555,7 @@ public class MainActivity extends Activity {
             rowHead.animate().cancel();
             rowHead.setAlpha(0f);
             rowHead.setText(head);
-            rowHead.animate().alpha(1f).setDuration(300).start();
+            rowHead.animate().alpha(1f).setDuration(450).start();
         }
         resetRowScroll();
         for (int i = 0; i < thumbs.size(); i++) {
@@ -1543,7 +1613,7 @@ public class MainActivity extends Activity {
             // đổi app: các ô mờ ra rồi trượt nhẹ vào lần lượt
             t.setAlpha(0f);
             t.setTranslationX(px(24));
-            t.animate().alpha(inShelf ? THUMB_DIM : ROW_IDLE_ALPHA).translationX(0).setStartDelay(i * 40L).setDuration(300)
+            t.animate().alpha(inShelf ? THUMB_DIM : ROW_IDLE_ALPHA).translationX(0).setStartDelay(i * 50L).setDuration(440)
                     .setInterpolator(new DecelerateInterpolator(1.8f)).start();
         }
     }
@@ -1704,10 +1774,10 @@ public class MainActivity extends Activity {
         if (!on) { stopThumbPreview(true); spreadThumbs(-1); fillRow(apps.get(focused)); }   // có bản mới (kênh vừa live) lúc đứng trong hàng: giờ mới đổ
         syncRowWithEpl();
         // vào hàng: ô chưa chọn tối bớt (ô chọn tự sáng lại trong sự kiện chọn); về dock: cả hàng sáng đều
-        for (FrameLayout t : thumbs) if (!t.hasFocus()) t.animate().alpha(on ? THUMB_DIM : ROW_IDLE_ALPHA).setDuration(220).start();
+        for (FrameLayout t : thumbs) if (!t.hasFocus()) t.animate().alpha(on ? THUMB_DIM : ROW_IDLE_ALPHA).setDuration(360).start();
         // dock lùi: mờ từng ảnh ô (ImageView vẽ thẳng với độ mờ, không cần lớp tạm). Mờ cả khay thì mỗi khung lúc ô app
         // đang phóng/thu GPU phải vẽ lại cả khay ra lớp tạm (~15ms), bấm xuống về dock bị khựng.
-        for (FrameLayout c : cards) c.getChildAt(0).animate().alpha(on ? 0.6f : 1f).setDuration(220).start();
+        for (FrameLayout c : cards) c.getChildAt(0).animate().alpha(on ? 0.6f : 1f).setDuration(360).start();
     }
 
     // ---------- nền ----------
@@ -1858,7 +1928,7 @@ public class MainActivity extends Activity {
         if (a.tv) {
             // ô Truyền hình: kênh xem gần đây trước rồi các kênh đầu danh sách; ảnh kênh đã có tên kênh nên không ghi thêm chữ
             List<Shelf.Item> out = new ArrayList<>();
-            for (Tv.Channel ch : Tv.recentFirst(this, Tv.load(this), SHELF_N)) {
+            for (Tv.Channel ch : Tv.recentFirst(this, Tv.load(this), ROW_N)) {
                 Shelf.Item it = new Shelf.Item();
                 it.pkg = a.pkg;
                 it.art = ch.art == null ? null : android.net.Uri.fromFile(new File(ch.art)).toString();
@@ -1921,7 +1991,7 @@ public class MainActivity extends Activity {
                 net.execute(() -> {
                     // hàng trận / trực tiếp trước (vài lượt gọi), xong là vẽ ngay; YouTube sau; lọc phim (nhiều trang) sau cùng
                     if (FptFeed.refresh(fav, ROW_MAX) | Tv360Feed.refresh(getApplicationContext(), favName, ROW_MAX)) feedsChanged();
-                    if (YtFeed.refresh(getApplicationContext(), SHELF_N)) feedsChanged();
+                    if (YtFeed.refresh(getApplicationContext(), ROW_N)) feedsChanged();
                     if (FptFeed.refreshFilms()) feedsChanged();
                     ytBusy.set(false);
                 });
@@ -2100,7 +2170,7 @@ public class MainActivity extends Activity {
         shelfVersion++;   // hàng của ô Apps đổi theo
     }
 
-    /** Tối đa 5 app mở gần nhất còn cài trên máy: ảnh là ô vẽ sẵn nếu có, không thì banner TV của app. */
+    /** Tối đa ROW_N app mở gần nhất còn cài trên máy: ảnh là ô vẽ sẵn nếu có, không thì banner TV của app. */
     private boolean onDock(String pkg) {
         if (apps != null) for (Apps.App a : apps) if (pkg.equals(a.pkg)) return true;
         return false;
@@ -2111,7 +2181,7 @@ public class MainActivity extends Activity {
         PackageManager pm = getPackageManager();
         List<Apps.App> games = Apps.games(this);
         for (String pkg : prefs().getString("recent_apps", "").split(",")) {
-            if (pkg.isEmpty() || out.size() >= SHELF_N) continue;
+            if (pkg.isEmpty() || out.size() >= ROW_N) continue;
             if (pkg.startsWith("game:")) {
                 for (Apps.App g : games) if (pkg.equals(g.key)) {
                     Shelf.Item it = new Shelf.Item();
@@ -2273,8 +2343,8 @@ public class MainActivity extends Activity {
         card.setScaleX(0.96f); card.setScaleY(0.96f);
         root.addView(box, new FrameLayout.LayoutParams(-1, -1));
         homePrompt = box;
-        box.animate().alpha(1f).setDuration(280).setInterpolator(EASE).start();
-        card.animate().scaleX(1f).scaleY(1f).setDuration(340).setInterpolator(EASE).withLayer().start();
+        box.animate().alpha(1f).setDuration(400).setInterpolator(EASE).start();
+        card.animate().scaleX(1f).scaleY(1f).setDuration(480).setInterpolator(EASE).withLayer().start();
         open.requestFocus();
     }
 
@@ -2292,12 +2362,12 @@ public class MainActivity extends Activity {
         b.setBackground(bg);
         b.setOnFocusChangeListener((v, has) -> {
             ValueAnimator a = ValueAnimator.ofArgb(has ? 0x1FFFFFFF : 0xEBF2EEE6, has ? 0xEBF2EEE6 : 0x1FFFFFFF);
-            a.setDuration(220);
+            a.setDuration(320);
             a.setInterpolator(EASE);
             a.addUpdateListener(an -> bg.setColor((int) an.getAnimatedValue()));
             a.start();
             b.setTextColor(has ? 0xFF1C1C1E : 0xE6F2EEE6);
-            b.animate().scaleX(has ? 1.04f : 1f).scaleY(has ? 1.04f : 1f).setDuration(220).setInterpolator(EASE).start();
+            b.animate().scaleX(has ? 1.04f : 1f).scaleY(has ? 1.04f : 1f).setDuration(320).setInterpolator(EASE).start();
         });
         return b;
     }
@@ -2307,7 +2377,7 @@ public class MainActivity extends Activity {
         if (later) homePromptLater = true;
         View v = homePrompt;
         homePrompt = null;
-        v.animate().alpha(0f).setDuration(220).setInterpolator(EASE).withEndAction(() -> root.removeView(v)).start();
+        v.animate().alpha(0f).setDuration(320).setInterpolator(EASE).withEndAction(() -> root.removeView(v)).start();
         tray.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
         shelfRow.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
         gear.setFocusable(true);
@@ -2325,7 +2395,7 @@ public class MainActivity extends Activity {
         shelfRow.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         gear.setFocusable(false);
         dimGlow(true);
-        if (eplBox != null) eplBox.animate().alpha(0f).setDuration(220).start();   // bảng nằm đúng chỗ thẻ lịch
+        if (eplBox != null) eplBox.animate().alpha(0f).setDuration(320).start();   // bảng nằm đúng chỗ thẻ lịch
         settings = new SettingsPanel(this, new SettingsPanel.Host() {
             @Override public TextView text(int weight, float size, int color) { return MainActivity.this.text(weight, size, color); }
             @Override public int px(float v) { return MainActivity.this.px(v); }
@@ -2350,7 +2420,7 @@ public class MainActivity extends Activity {
         tray.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
         shelfRow.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
         gear.setFocusable(true);
-        if (eplBox != null) eplBox.animate().alpha(eplShelfAlpha()).setDuration(300).start();
+        if (eplBox != null) eplBox.animate().alpha(eplShelfAlpha()).setDuration(420).start();
         syncRowWithEpl();
         gear.requestFocus();   // đóng bảng: con trỏ về nút bánh răng như lúc mở
     }
@@ -2433,9 +2503,9 @@ public class MainActivity extends Activity {
         v.animate().cancel();
         if (on) {
             if (v.getVisibility() != View.VISIBLE) { v.setAlpha(0f); v.setVisibility(View.VISIBLE); }
-            v.animate().alpha(alpha).setDuration(300).setInterpolator(EASE).start();
+            v.animate().alpha(alpha).setDuration(420).setInterpolator(EASE).start();
         } else if (v.getVisibility() == View.VISIBLE) {
-            v.animate().alpha(0f).setDuration(260).setInterpolator(EASE).withEndAction(() -> v.setVisibility(View.GONE)).start();
+            v.animate().alpha(0f).setDuration(380).setInterpolator(EASE).withEndAction(() -> v.setVisibility(View.GONE)).start();
         }
     }
 
@@ -2570,7 +2640,7 @@ public class MainActivity extends Activity {
         dimGlow(true);
         // bảng đã che kín: tạm ẩn màn Home bên dưới (ảnh nền, kính, dock) để mỗi khung khỏi vẽ thừa cả màn phía sau
         View panel = allApps;
-        allApps.animate().alpha(1f).setDuration(220).withEndAction(() -> {
+        allApps.animate().alpha(1f).setDuration(340).withEndAction(() -> {
             if (allApps != panel) return;
             for (int i = 0; i < root.getChildCount(); i++) {
                 View c = root.getChildAt(i);
@@ -2612,14 +2682,14 @@ public class MainActivity extends Activity {
     /** Nền sau bảng Apps theo ô đang chọn: ảnh game hiện dần, rời ô game thì mờ đi. */
     private void appsBackdrop(String bgFile) {
         if (appsArt == null) return;
-        if (bgFile == null) { appsArtFor = null; appsArt.animate().alpha(0f).setDuration(300).start(); return; }
+        if (bgFile == null) { appsArtFor = null; appsArt.animate().alpha(0f).setDuration(420).start(); return; }
         if (bgFile.equals(appsArtFor)) return;
         appsArtFor = bgFile;
         ImageView target = appsArt;
         images.load(android.net.Uri.fromFile(new File(bgFile)).toString(), bgWidth(), bmp -> {
             if (!bgFile.equals(appsArtFor) || bmp == null || target != appsArt) return;
             target.setImageBitmap(bmp);
-            target.animate().alpha(1f).setDuration(420).setInterpolator(EASE).start();
+            target.animate().alpha(1f).setDuration(560).setInterpolator(EASE).start();
         });
     }
 
@@ -2958,7 +3028,7 @@ public class MainActivity extends Activity {
             td.startTransition(260);
         }
         appsArt.animate().cancel();
-        appsArt.animate().alpha(0.6f).setDuration(320).setInterpolator(EASE).start();
+        appsArt.animate().alpha(0.6f).setDuration(440).setInterpolator(EASE).start();
     }
 
     private void redrawChannelCard() { if (chShown != null && chCard != null) fillChannelCard(chShown, false); }
@@ -3009,11 +3079,11 @@ public class MainActivity extends Activity {
             chBarClip.setDrawable(barFill(acc));
             // nội dung cũ mờ đi, nội dung mới trượt lên ~12px rồi hiện ra
             chBody.animate().cancel();
-            chBody.animate().alpha(0f).setDuration(90).setInterpolator(EASE).withEndAction(() -> {
+            chBody.animate().alpha(0f).setDuration(140).setInterpolator(EASE).withEndAction(() -> {
                 if (chCard == null || chShown != ch) return;
                 fillChannelCard(ch, true);
                 chBody.setTranslationY(px(12));
-                chBody.animate().alpha(1f).translationY(0).setDuration(200).setInterpolator(EASE).start();
+                chBody.animate().alpha(1f).translationY(0).setDuration(320).setInterpolator(EASE).start();
             }).start();
             chHead.setAlpha(chExpanded ? 0f : 1f);
             fillHead(ch);
@@ -3161,14 +3231,14 @@ public class MainActivity extends Activity {
         chVol.setLevel(0f);
         chFrame.setVisibility(View.VISIBLE);
         chFrame.animate().cancel();
-        chFrame.animate().scaleX(1f).scaleY(1f).setDuration(340).setInterpolator(EASE).withEndAction(() -> {
+        chFrame.animate().scaleX(1f).scaleY(1f).setDuration(460).setInterpolator(EASE).withEndAction(() -> {
             if (chVideo != null && chPreviewing == ch) chVideo.setVisibility(View.VISIBLE);   // tạo Surface -> beginPlayback
         }).start();
         chHead.animate().cancel();
         chHead.animate().alpha(0f).setDuration(160).start();
         chBodyWrap.animate().cancel();
-        chBodyWrap.animate().translationY(chExpandedY()).setDuration(340).setInterpolator(EASE).start();
-        ((ViewGroup) chBody).getChildAt(0).animate().alpha(1f).setDuration(260).setStartDelay(120).start();
+        chBodyWrap.animate().translationY(chExpandedY()).setDuration(460).setInterpolator(EASE).start();
+        ((ViewGroup) chBody).getChildAt(0).animate().alpha(1f).setDuration(360).setStartDelay(120).start();
         ((View) chDesc.getParent()).animate().alpha(0f).setDuration(160).start();
         chHint.setText("Xem toàn màn hình");
         ui.postDelayed(this::fitRows, 10);
@@ -3361,17 +3431,17 @@ public class MainActivity extends Activity {
                 g.setImageBitmap(Glow.make(cw, ch, px(r) * sc, sp, Glow.dominant(art)));
             }
             float s = has ? sc : 1f;
-            android.view.animation.Interpolator in = has ? new OvershootInterpolator(0.8f) : EASE;
+            android.view.animation.Interpolator in = EASE;
             img.animate().cancel(); sheen.animate().cancel(); g.animate().cancel();
-            img.animate().scaleX(s).scaleY(s).translationZ(has ? px(30) : 0).setInterpolator(in).setDuration(has ? 360 : 420).start();
+            img.animate().scaleX(s).scaleY(s).translationZ(has ? px(30) : 0).setInterpolator(in).setDuration(has ? 500 : 520).start();
             sheen.animate().scaleX(s).scaleY(s).translationZ(has ? px(31) : 0).alpha(has ? 1f : 0f)
-                    .setInterpolator(in).setDuration(has ? 360 : 380).start();
+                    .setInterpolator(in).setDuration(has ? 500 : 480).start();
             if (has) {
-                g.animate().alpha(GLOW_MOVING).setDuration(380).setInterpolator(EASE).withEndAction(() -> startBreathing(g)).start();
+                g.animate().alpha(GLOW_MOVING).setDuration(520).setInterpolator(EASE).withEndAction(() -> startBreathing(g)).start();
                 onFocus.run();
             } else {
                 if (breathe != null) { breathe.cancel(); breathe = null; }
-                g.animate().alpha(0f).setDuration(200).setInterpolator(EASE).start();
+                g.animate().alpha(0f).setDuration(300).setInterpolator(EASE).start();
             }
         });
         t.setOnKeyListener((v, kc, ev) -> {
@@ -3382,7 +3452,7 @@ public class MainActivity extends Activity {
                 for (View x : new View[]{img, sheen}) {
                     x.animate().cancel();
                     x.animate().scaleX(sc).scaleY(sc).translationZ(px(x == img ? 30 : 31))
-                            .setInterpolator(new OvershootInterpolator(2.2f)).setDuration(260).start();
+                            .setInterpolator(EASE).setDuration(420).start();
                 }
             }
             return false;
@@ -3433,7 +3503,7 @@ public class MainActivity extends Activity {
         if (appsScroll != null) { appsScroll.cancel(); appsScroll = null; }
         appsArt = null; appsArtFor = null;
         releaseChannelCard();   // dừng xem trước, thả Surface + bộ đệm luồng
-        a.animate().alpha(0f).setDuration(160).withEndAction(() -> root.removeView(a)).start();
+        a.animate().alpha(0f).setDuration(260).withEndAction(() -> root.removeView(a)).start();
         tray.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
         shelfRow.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
         gear.setFocusable(true);
@@ -3556,7 +3626,11 @@ public class MainActivity extends Activity {
             java.util.Random r = new java.util.Random();
             float dx = px(-40 + r.nextInt(81)), dy = px(-40 + r.nextInt(41));
             saverText.animate().translationX(dx).translationY(dy).setDuration(4000).setInterpolator(EASE)
-                    .withEndAction(MainActivity.this::placeGlass).start();   // dời xong: kính khớp lại với nền
+                    .withEndAction(() -> {
+                        placeGlass();   // dời xong: kính khớp lại với nền
+                        // chốt lại độ cao dòng thông báo theo cụm chữ, phòng khi đường dịch của nó bị cắt ngang
+                        if (saverTet != null && saverText != null) saverTet.setTranslationY(noticeShift + saverText.getTranslationY());
+                    }).start();
             saverHalo.animate().translationX(dx).translationY(dy).setDuration(4000).setInterpolator(EASE).start();
             // thông báo dịch cùng độ cao với cụm bên trái: chân chữ luôn thẳng hàng với dòng âm lịch
             saverTet.animate().translationX(-Math.abs(dx) / 3).translationY(noticeShift + dy).setDuration(4000).setInterpolator(EASE).start();
@@ -3635,6 +3709,14 @@ public class MainActivity extends Activity {
         saverTet.setFontFeatureSettings("tnum");
         saverTet.setLetterSpacing(0.02f);
         saverTet.setShadowLayer(px(14), 0, px(2), 0x52000000);   // bóng mỏng nhoè rộng: tách chữ khỏi ảnh, không thành viền
+        // chữ tròn (Quicksand) cho cả cụm màn hình khoá: mềm như mặt đồng hồ Apple Watch, không cứng nhọn như Inter.
+        // Quicksand thanh hơn Inter cùng số wght: chữ nhỏ (lịch, âm lịch, thông báo) đậm thêm để vẫn rõ trên ảnh sáng
+        saverTime.setTypeface(roundFont(500));
+        saverSolar.setTypeface(roundFont(600));
+        saverLunar.setTypeface(roundFont(600));
+        saverTet.setTypeface(roundFont(600));
+        saverTime.setLetterSpacing(0f);
+        saverSolar.setLetterSpacing(0f);
         // chữ kính: quầng tối rất mềm, đều quanh chữ (không lệch xuống, không thành viền nổi khối)
         for (TextView t : new TextView[]{saverTime, saverSolar, saverLunar}) t.setShadowLayer(px(14), 0, 0, 0x2E000000);
         // bề rộng cố định theo chuỗi rộng nhất (+15% dư): khung tự đo của TextView hụt với Inter có độ đậm tuỳ biến
@@ -3783,13 +3865,32 @@ public class MainActivity extends Activity {
     /** Đổi thông báo: mờ đi, thay chữ, hiện lại (chậm, nhẹ). */
     private void setNotice(CharSequence s, boolean fade) {
         if (saverTet == null) return;
+        if (noticeFade != null) noticeFade.cancel();
         if (!fade) { saverTet.setText(s); saverTet.setAlpha(1f); return; }
-        saverTet.animate().cancel();
-        saverTet.animate().alpha(0f).setDuration(500).setInterpolator(EASE).withEndAction(() -> {
-            saverTet.setText(s);
-            saverTet.animate().alpha(1f).setDuration(700).setInterpolator(EASE).start();
-        }).start();
+        // mờ/hiện bằng bộ chạy riêng chỉ cho độ trong: KHÔNG gọi saverTet.animate().cancel(), vì lượt dịch chống lưu
+        // ảnh (saverMove, 3 phút) trùng đúng lượt đổi thông báo (mỗi phút, cùng mốc bắt đầu): huỷ ở đây là cắt ngang
+        // đường dịch, dòng thông báo đứng lại giữa chừng, lệch khỏi chân chữ dòng âm lịch
+        TextView t = saverTet;
+        android.animation.ObjectAnimator out = android.animation.ObjectAnimator.ofFloat(t, View.ALPHA, t.getAlpha(), 0f);
+        out.setDuration(500);
+        out.setInterpolator(EASE);
+        out.addListener(new android.animation.AnimatorListenerAdapter() {
+            boolean cancelled;
+            @Override public void onAnimationCancel(android.animation.Animator a) { cancelled = true; }
+            @Override public void onAnimationEnd(android.animation.Animator a) {
+                if (cancelled || saverTet != t) return;
+                t.setText(s);
+                noticeFade = android.animation.ObjectAnimator.ofFloat(t, View.ALPHA, 0f, 1f);
+                noticeFade.setDuration(700);
+                noticeFade.setInterpolator(EASE);
+                noticeFade.start();
+            }
+        });
+        noticeFade = out;
+        out.start();
     }
+
+    private android.animation.ObjectAnimator noticeFade;
 
     /** Độ chói cảm nhận trung bình (0..1) của một vùng ảnh, toạ độ tính theo tỉ lệ khung hình. */
     private static float regionGlare(Bitmap b, float x0, float y0, float x1, float y1) {
@@ -3853,8 +3954,16 @@ public class MainActivity extends Activity {
                 boolean compact = eplView.mode() == EplView.COMPACT;
                 if (kc == KeyEvent.KEYCODE_DPAD_UP) {
                     root.playSoundEffect(android.view.SoundEffectConstants.NAVIGATION_UP);
+                    // phía trên thẻ không còn gì (Cài đặt đã ra giữa, sang bằng phím phải): ở khu trên cùng thì đứng yên
                     if (compact && eplView.selected() == EplView.SEL_TABLE && eplView.hasMatchPart()) eplView.setSelected(EplView.SEL_MATCH);
-                    else gear.requestFocus();
+                    return true;
+                }
+                if (kc == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                    // sang nút Cài đặt (đứng ngay sau đồng hồ ở giữa phía trên), thẻ gọn hay đầy đủ đều vậy
+                    if (gear.isFocusable()) {
+                        root.playSoundEffect(android.view.SoundEffectConstants.NAVIGATION_RIGHT);
+                        gear.requestFocus();
+                    }
                     return true;
                 }
                 if (kc == KeyEvent.KEYCODE_DPAD_DOWN) {
@@ -3867,17 +3976,25 @@ public class MainActivity extends Activity {
                     root.playSoundEffect(android.view.SoundEffectConstants.CLICK);
                     stepEpl(); return true;
                 }
-                return true;   // trái/phải: đứng yên
+                return true;   // trái: đứng yên (mép màn hình)
             }
             if (allApps == null && gear.hasFocus()) {
-                // ở nút Cài đặt: xuống thì về đúng ô app đang chọn, các hướng khác đứng yên
+                // ở nút Cài đặt (giữa phía trên):
+                //   xuống: vào hàng banner nếu đang có, không thì về đúng ô app đang chọn trên dock
+                //   trái: về thẻ lịch thi đấu (nếu thẻ đang hiện), phải / lên: đứng yên
                 if (kc == KeyEvent.KEYCODE_DPAD_DOWN) {
                     root.playSoundEffect(android.view.SoundEffectConstants.NAVIGATION_DOWN);
-                    if (eplSelectable()) focusEpl(false);
-                    else focusBelowTop();
+                    focusBelowTop();
                     return true;
                 }
-                if (kc == KeyEvent.KEYCODE_DPAD_UP || kc == KeyEvent.KEYCODE_DPAD_LEFT || kc == KeyEvent.KEYCODE_DPAD_RIGHT) return true;
+                if (kc == KeyEvent.KEYCODE_DPAD_LEFT) {
+                    if (eplSelectable()) {
+                        root.playSoundEffect(android.view.SoundEffectConstants.NAVIGATION_LEFT);
+                        focusEpl(false);
+                    }
+                    return true;
+                }
+                if (kc == KeyEvent.KEYCODE_DPAD_UP || kc == KeyEvent.KEYCODE_DPAD_RIGHT) return true;
             }
             if (allApps == null && inShelf && (kc == KeyEvent.KEYCODE_DPAD_LEFT || kc == KeyEvent.KEYCODE_DPAD_RIGHT)) {
                 // trong hàng thumb: sang đúng ô kề theo thứ tự (ô ngoài màn vẫn tới được, hàng tự cuộn); tới mép thì đứng yên
@@ -3974,6 +4091,21 @@ public class MainActivity extends Activity {
                     .setFontVariationSettings("'wght' " + weight + ", 'opsz' " + opsz).build();
         } catch (Exception e) {
             tf = Typeface.create("sans-serif", weight >= 600 ? Typeface.BOLD : Typeface.NORMAL);
+        }
+        fonts.put(key, tf);
+        return tf;
+    }
+
+    /** Chữ tròn cho màn hình khoá (Quicksand, đầu nét bo tròn kiểu đồng hồ Apple Watch); wght chạy 300..700. */
+    private Typeface roundFont(int weight) {
+        String key = "round/" + weight;
+        Typeface tf = fonts.get(key);
+        if (tf != null) return tf;
+        try {
+            tf = new Typeface.Builder(getAssets(), "fonts/Quicksand.ttf")
+                    .setFontVariationSettings("'wght' " + Math.max(300, Math.min(700, weight))).build();
+        } catch (Exception e) {
+            tf = fontFor(weight, 30);
         }
         fonts.put(key, tf);
         return tf;

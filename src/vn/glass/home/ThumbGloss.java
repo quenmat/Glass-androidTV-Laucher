@@ -36,9 +36,15 @@ final class ThumbGloss extends View {
         c.drawRoundRect(rect, radius, radius, gloss);
     }
 
-    /** Ô được chọn: lớp bóng hiện dần (sau delayMs, cùng lúc ô phóng); bỏ chọn: tắt dần. */
-    void focus(boolean on, long delayMs) {
+    // cùng đường cong với nhịp phóng ô (MainActivity.EASE): lớp bóng sáng lên đúng theo nhịp ô nở, xong cùng lúc.
+    // Đường cong mặc định (chậm trước, nhanh giữa) làm bóng hiện rõ khi ô đã nở gần xong, trông như có thêm một
+    // mảng sáng tự tải ở mép trên sau khi phóng.
+    private static final android.view.animation.Interpolator EASE =
+            new android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f);
+
+    /** Ô được chọn: lớp bóng hiện cùng nhịp ô phóng (sau delayMs, trong durMs); bỏ chọn: tắt cùng nhịp ô thu. */
+    void focus(boolean on, long delayMs, long durMs) {
         animate().cancel();
-        animate().alpha(on ? 1f : 0f).setStartDelay(on ? delayMs : 0).setDuration(on ? 260 : 180).start();
+        animate().alpha(on ? 1f : 0f).setStartDelay(on ? delayMs : 0).setDuration(durMs).setInterpolator(EASE).start();
     }
 }

@@ -74,8 +74,26 @@ final class FrostView extends View {
     /** Kính khói của dock: tối hơn kính ô giá (~72% trên nền tối, tới ~87% trên nền sáng) để nền dưới khay không chói. */
     FrostView smoky() {
         darkMin = 0xB8; darkMax = 0xDE;
+        lift = true;
+        liftEdge.setStyle(Paint.Style.STROKE);
+        liftEdge.setStrokeWidth(edge.getStrokeWidth() * 1.5f);
         return dark();
     }
+
+    // Kính dock trên nền tối: kính khói đen hoà hẳn vào nền, khay biến mất. Nền sau khay càng tối thì càng nâng nhẹ
+    // một lớp trắng sữa rất mỏng (trên sáng hơn dưới) và một mép kính bắt sáng mảnh (cạnh trên rõ, nhạt dần xuống),
+    // nhẹ nhất có thể, chỉ vừa đủ thấy khay. Nền sáng: không có gì thêm, vẫn là kính khói như cũ.
+    private boolean lift;
+    private float liftFrom, liftTo;
+    private final Paint liftFill = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint liftEdge = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    /** Độ nâng kính (0..1) theo nền sau khay: sáng hơn ~24% thì 0, tối hơn ~10% thì đủ mức. */
+    private float liftOf(Bitmap b) {
+        return Math.max(0f, Math.min(1f, (0.24f - regionLum(b)) / 0.14f));
+    }
+
+    private float currentLift() { return liftFrom + (liftTo - liftFrom) * mix; }
 
     /** Độ đậm lớp đen cho kính tối: nền tối giữ mức thấp (ô giá ~28%), nền sáng đậm dần để chữ đủ tương phản. */
     private int darkAlpha(Bitmap b) {
@@ -161,6 +179,7 @@ final class FrostView extends View {
         cur = blurred;
         if (adaptive) { milkFrom = currentMilk(); milkTo = darkAlpha(blurred); }
         if (tame) { shadeFrom = currentShade(); shadeTo = shadeAlpha(blurred); }
+        if (lift) { liftFrom = currentLift(); liftTo = liftOf(blurred); }
         old.setShader(prev == null ? null : shaderFor(prev));
         img.setShader(shaderFor(blurred));
         if (anim != null) anim.cancel();
@@ -183,7 +202,16 @@ final class FrostView extends View {
     }
 
     @Override
-    protected void onSizeChanged(int w, int h, int ow, int oh) { rect.set(0, 0, w, h); }
+    protected void onSizeChanged(int w, int h, int ow, int oh) {
+        rect.set(0, 0, w, h);
+        if (lift) {
+            liftFill.setShader(new android.graphics.LinearGradient(0, 0, 0, h, 0x0DFFFFFF, 0x06FFFFFF, Shader.TileMode.CLAMP));
+            // mép kính kiểu Apple TV: bắt sáng ở góc trên trái, tắt dần theo đường chéo (khay rất dài nên đường
+            // chéo ngắn, chừng 3 lần chiều cao), phần còn lại chỉ còn một vệt rất mờ
+            liftEdge.setShader(new android.graphics.LinearGradient(0, 0, h * 3f, h * 1.2f,
+                    new int[]{0x2AFFFFFF, 0x0BFFFFFF, 0x05FFFFFF}, new float[]{0f, 0.5f, 1f}, Shader.TileMode.CLAMP));
+        }
+    }
 
     @Override
     protected void onDraw(Canvas c) {
@@ -210,6 +238,15 @@ final class FrostView extends View {
         if (tame && currentShade() > 0) {
             shade.setColor(currentShade() << 24);
             c.drawRoundRect(rect, radius, radius, shade);
+        }
+        float l = lift ? currentLift() : 0f;
+        if (l > 0.01f) {
+            int a = Math.round(255 * l);
+            liftFill.setAlpha(a);
+            c.drawRoundRect(rect, radius, radius, liftFill);
+            liftEdge.setAlpha(a);
+            float e = liftEdge.getStrokeWidth() / 2f;
+            c.drawRoundRect(e, e, rect.right - e, rect.bottom - e, radius - e, radius - e, liftEdge);
         }
         float h = edge.getStrokeWidth() / 2f;
         c.drawRoundRect(h, h, rect.right - h, rect.bottom - h, radius - h, radius - h, edge);

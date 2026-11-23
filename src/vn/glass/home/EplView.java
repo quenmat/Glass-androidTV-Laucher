@@ -282,7 +282,7 @@ final class EplView extends View {
         if (which == SEL_NONE) {
             if (selAnim != null) selAnim.cancel();
             selAnim = android.animation.ValueAnimator.ofFloat(selA, 0f);
-            selAnim.setDuration(180);
+            selAnim.setDuration(280);
             selAnim.addUpdateListener(a -> { selA = (float) a.getAnimatedValue(); if (selA == 0f) sel = SEL_NONE; invalidate(); });
             selAnim.start();
             return;
@@ -291,7 +291,7 @@ final class EplView extends View {
         sel = which;
         if (selAnim != null) selAnim.cancel();
         selAnim = android.animation.ValueAnimator.ofFloat(fresh ? 0f : selA, 1f);
-        selAnim.setDuration(fresh ? 200 : 160);
+        selAnim.setDuration(fresh ? 300 : 240);
         selAnim.setInterpolator(new android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f));
         selAnim.addUpdateListener(a -> { selA = (float) a.getAnimatedValue(); invalidate(); });
         selAnim.start();
