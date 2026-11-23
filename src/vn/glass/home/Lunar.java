@@ -49,6 +49,16 @@ final class Lunar {
         return day + " " + month + " năm " + year;
     }
 
+    /** "Rằm tháng Mười, năm Bính Ngọ" (dòng âm lịch của bảng lịch: rằm, mùng gọi đúng tên, nối ý bằng dấu phẩy). */
+    static String line(int dd, int mm, int yy) {
+        int[] l = fromSolar(dd, mm, yy);
+        String day = l[0] <= 10 ? "Mùng " + l[0] : l[0] == 15 ? "Rằm" : String.valueOf(l[0]);
+        return day + " tháng " + monthName(l[1], l[3] == 1) + ", năm " + CAN[(l[2] + 6) % 10] + " " + CHI[(l[2] + 8) % 12];
+    }
+
+    /** "Chín", "Mười Một", "Tư nhuận". */
+    static String monthName(int m, boolean leap) { return THANG[m - 1] + (leap ? " nhuận" : ""); }
+
     /**
      * Dòng đếm ngược tới Tết (mùng 1 tháng Giêng) gần nhất tính từ hôm nay:
      * "Còn 113 ngày nữa là Tết Đinh Mùi", "Mai là Tết Đinh Mùi", đúng mùng 1: "Chúc mừng năm mới Đinh Mùi".

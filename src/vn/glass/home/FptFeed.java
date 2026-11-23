@@ -47,7 +47,7 @@ final class FptFeed {
         }
     }
 
-    private static final class M { String ev, home, away, homeCode, awayCode, round, slug; long at; boolean live, fav; }
+    private static final class M { String ev, home, away, homeCode, awayCode, round, slug; long at, dur; boolean live, fav; }
 
     /** Tải lại (luồng nền). favAbbr: mã 3 chữ của đội yêu thích (vd MUN), có thể null. Trả true khi hàng đổi. */
     static boolean refresh(String favAbbr, int row) {
@@ -77,51 +77,90 @@ final class FptFeed {
     private static volatile List<Shelf.Item> lastMatches = Collections.emptyList();
     private static final Pattern EVENT_OF = Pattern.compile("/su-kien/[a-z0-9-]*-([0-9a-f]{24})#");
 
-    /** Ô các trận EPL của vòng hiện tại; lỗi thì null. */
+    // Các giải khác FPT Play cũng phát trực tiếp (V.League, U17 World Cup, NBA, VBA, FA Cup, Shopee Cup): mỗi giải một
+    // trang lịch công khai cùng dạng trang Ngoại hạng Anh. Chỉ lấy trận đang diễn ra hoặc sắp đá trong OTHER_SOON
+    // (khỏi tràn hàng bằng lịch cả tuần); lịch các giải này nửa tiếng đọc lại một lần (ít đổi), trạng thái trực tiếp
+    // tính theo giờ như trận EPL. Đường dẫn sai thì trang trả về lịch Ngoại hạng Anh: nhận ra và bỏ.
+    private static final String[] OTHER_PAGES = {"v-league", "fifa-u17-world-cup", "nba", "vba", "fa-cup",
+            "asean-club-championship-shopee-cup"};
+    private static final long OTHER_EVERY = 30 * 60_000L, OTHER_SOON = 3 * 3600_000L;
+    private static final long BASKET_MS = 2 * 3600_000L + 45 * 60_000L;   // một trận bóng rổ kể cả nghỉ, hội ý
+    private static long othersAt;
+    private static List<M> others = Collections.emptyList();
+
+    /** Trận có sự kiện FPT trong dữ liệu một trang lịch; listed nhận mã mọi trận trang còn liệt kê (kể cả đã xong). */
+    private static List<M> parsePage(String h, String favAbbr, long now, java.util.Set<String> listed, String expectSlug) throws Exception {
+        JSONObject pp = nextData(h).getJSONObject("props").getJSONObject("pageProps");
+        if (expectSlug != null && "premier-league".equals(pp.optString("activeCompetitionSlug", ""))) return new ArrayList<>();
+        List<JSONObject> raw = new ArrayList<>();
+        collect(pp.opt("fixturesSrrData"), raw);
+        List<M> ms = new ArrayList<>();
+        for (JSONObject o : raw) {
+            JSONObject mt = o.optJSONObject("match");
+            JSONArray ps = o.optJSONArray("participants");
+            if (mt == null || ps == null || ps.length() < 2) continue;
+            JSONObject refs = mt.optJSONObject("internalRefs");
+            String ev = refs == null ? null : refs.optString("eventId", null);
+            if (ev == null || !ev.matches("[0-9a-f]{24}")) continue;
+            if (listed != null) listed.add(ev);
+            M m = new M();
+            m.ev = ev;
+            m.at = vnTime(mt.optString("scheduledAt", ""));
+            m.dur = "Sport:basketball".equals(mt.optString("sportId", "")) ? BASKET_MS : MATCH_MS;
+            String st = mt.optString("status", "").toLowerCase(java.util.Locale.ROOT);
+            boolean done = st.contains("finish") || st.contains("final") || st.contains("ended") || st.contains("full") || st.contains("complete")
+                    || st.contains("cancel") || st.contains("postpon") || !mt.isNull("scoreFinal")
+                    || (m.at > 0 && now > m.at + m.dur);
+            if (done || m.at == 0) continue;
+            boolean started = st.contains("live") || st.contains("progress") || st.contains("play") || st.contains("half");
+            m.live = started || now >= m.at;
+            JSONObject th = ps.getJSONObject(0).optJSONObject("team"), ta = ps.getJSONObject(1).optJSONObject("team");
+            if (th == null || ta == null) continue;
+            m.home = th.optString("name", ""); m.away = ta.optString("name", "");
+            m.homeCode = th.optString("shortCode", ""); m.awayCode = ta.optString("shortCode", "");
+            // app FPT Play chỉ nhận link sự kiện dạng /su-kien/<tên-trận>-<mã> (phải có gạch ngang trước mã);
+            // thiếu tên thì không mở được trang trận, launcher rơi về mở app ở màn đang dở
+            String sh = th.optString("slug", ""), sa = ta.optString("slug", "");
+            m.slug = (sh.isEmpty() || sa.isEmpty() ? "tran-dau" : sh + "-" + sa).replaceAll("[^a-z0-9-]", "");
+            JSONObject rd = o.optJSONObject("round");
+            m.round = rd != null ? rd.optString("id", "") : mt.optString("roundId", "");
+            m.fav = favAbbr != null && (favAbbr.equalsIgnoreCase(m.homeCode) || favAbbr.equalsIgnoreCase(m.awayCode));
+            ms.add(m);
+        }
+        return ms;
+    }
+
+    /** Trận các giải khác (đọc lại khi tới hạn; lỗi hết thì giữ danh sách cũ, thử lại sau 5 phút). */
+    private static List<M> others(String favAbbr, long now) {
+        if (othersAt != 0 && now - othersAt < OTHER_EVERY) return others;
+        List<M> all = new ArrayList<>();
+        boolean ok = false;
+        for (String page : OTHER_PAGES) {
+            try { all.addAll(parsePage(get(SITE + "/lich-thi-dau/" + page), favAbbr, now, null, page)); ok = true; }
+            catch (Exception e) { android.util.Log.i(TAG, "lich " + page + " loi " + e); }
+        }
+        if (ok) { others = all; othersAt = now; } else othersAt = now - OTHER_EVERY + 5 * 60_000L;
+        return others;
+    }
+
+    /** Ô trận EPL của vòng hiện tại + trận đang / sắp diễn ra của các giải khác; lỗi trang EPL thì null. */
     private static List<Shelf.Item> matches(String favAbbr, int row) {
         try {
-            String h = get(SITE + "/lich-thi-dau/ngoai-hang-anh");
-            JSONObject data = nextData(h);
-            List<JSONObject> raw = new ArrayList<>();
-            collect(data.getJSONObject("props").getJSONObject("pageProps").opt("fixturesSrrData"), raw);
             long now = System.currentTimeMillis();
-            List<M> ms = new ArrayList<>();
-            java.util.Set<String> listed = new java.util.HashSet<>();   // mã mọi trận trang còn liệt kê (kể cả đã xong)
-            for (JSONObject o : raw) {
-                JSONObject mt = o.optJSONObject("match");
-                JSONArray ps = o.optJSONArray("participants");
-                if (mt == null || ps == null || ps.length() < 2) continue;
-                JSONObject refs = mt.optJSONObject("internalRefs");
-                String ev = refs == null ? null : refs.optString("eventId", null);
-                if (ev == null || !ev.matches("[0-9a-f]{24}")) continue;
-                listed.add(ev);
-                M m = new M();
-                m.ev = ev;
-                m.at = vnTime(mt.optString("scheduledAt", ""));
-                String st = mt.optString("status", "").toLowerCase(java.util.Locale.ROOT);
-                boolean done = st.contains("finish") || st.contains("final") || st.contains("ended") || st.contains("full") || st.contains("complete")
-                        || st.contains("cancel") || st.contains("postpon") || !mt.isNull("scoreFinal")
-                        || (m.at > 0 && now > m.at + MATCH_MS);
-                if (done || m.at == 0) continue;
-                boolean started = st.contains("live") || st.contains("progress") || st.contains("play") || st.contains("half");
-                m.live = started || now >= m.at;
-                JSONObject th = ps.getJSONObject(0).optJSONObject("team"), ta = ps.getJSONObject(1).optJSONObject("team");
-                if (th == null || ta == null) continue;
-                m.home = th.optString("name", ""); m.away = ta.optString("name", "");
-                m.homeCode = th.optString("shortCode", ""); m.awayCode = ta.optString("shortCode", "");
-                // app FPT Play chỉ nhận link sự kiện dạng /su-kien/<tên-trận>-<mã> (phải có gạch ngang trước mã);
-                // thiếu tên thì không mở được trang trận, launcher rơi về mở app ở màn đang dở
-                String sh = th.optString("slug", ""), sa = ta.optString("slug", "");
-                m.slug = (sh.isEmpty() || sa.isEmpty() ? "tran-dau" : sh + "-" + sa).replaceAll("[^a-z0-9-]", "");
-                JSONObject rd = o.optJSONObject("round");
-                m.round = rd != null ? rd.optString("id", "") : mt.optString("roundId", "");
-                m.fav = favAbbr != null && (favAbbr.equalsIgnoreCase(m.homeCode) || favAbbr.equalsIgnoreCase(m.awayCode));
-                ms.add(m);
-            }
+            java.util.Set<String> listed = new java.util.HashSet<>();
+            List<M> ms = parsePage(get(SITE + "/lich-thi-dau/ngoai-hang-anh"), favAbbr, now, listed, null);
             // vòng hiện tại: vòng của trận chưa xong đá sớm nhất; chỉ giữ trận của vòng đó
             String cur = null; long first = Long.MAX_VALUE;
             for (M m : ms) if (m.at < first) { first = m.at; cur = m.round; }
             if (cur != null) { String c = cur; ms.removeIf(m -> !c.equals(m.round)); }
+            int epl = ms.size();
+            // giải khác: đang diễn ra hoặc sắp đá trong OTHER_SOON (trạng thái tính lại theo giờ hiện tại)
+            for (M m : others(favAbbr, now)) {
+                listed.add(m.ev);
+                if (now > m.at + m.dur || m.at - now > OTHER_SOON) continue;
+                m.live = now >= m.at;
+                ms.add(m);
+            }
             ms.sort((x, y) -> {
                 if (x.live != y.live) return x.live ? -1 : 1;
                 if (x.at != y.at) return Long.compare(x.at, y.at);
@@ -129,6 +168,7 @@ final class FptFeed {
             });
             List<Shelf.Item> out = new ArrayList<>();
             Map<String, String> keep = new HashMap<>();
+            java.util.Set<String> arts = new java.util.HashSet<>();
             for (M m : ms) {
                 if (out.size() >= row) break;
                 String poster;
@@ -136,13 +176,15 @@ final class FptFeed {
                 if (poster == null) poster = poster(m.ev);
                 if (poster == null) continue;   // chưa có banner: bỏ ô, lượt sau thử lại
                 keep.put(m.ev, poster);
+                // vài giải dùng chung một ảnh cho mọi trận (U17 World Cup): chỉ giữ ô sớm nhất, khỏi một hàng banner y hệt
+                if (!arts.add(poster.replaceAll("\\?.*$", ""))) continue;
                 Shelf.Item it = new Shelf.Item();
                 it.pkg = PKG;
                 it.title = "";                  // banner đã in tên hai đội, giờ, vòng: không ghi chữ, không dải tối
                 it.art = poster;
                 it.live = m.live;
                 it.startAt = m.at;              // tới giờ thì tự thành "trực tiếp", quá giờ thì tự bỏ, không đợi lượt tải
-                it.until = m.at + MATCH_MS;
+                it.until = m.at + m.dur;
                 it.intent = "intent://fptplay.vn/su-kien/" + m.slug + "-" + m.ev
                         + "#Intent;scheme=https;action=android.intent.action.VIEW;package=" + PKG + ";end";
                 out.add(it);
@@ -163,7 +205,7 @@ final class FptFeed {
                 while (out.size() > row) out.remove(out.size() - 1);
             }
             synchronized (posters) { posters.clear(); posters.putAll(keep); }   // trận đã bỏ khỏi hàng: quên banner
-            android.util.Log.i(TAG, "tran=" + ms.size() + " giu=" + carry.size() + " o=" + out.size());
+            android.util.Log.i(TAG, "epl=" + epl + " giaikhac=" + (ms.size() - epl) + " giu=" + carry.size() + " o=" + out.size());
             return out;
         } catch (Exception e) {
             android.util.Log.i(TAG, "loi " + e);

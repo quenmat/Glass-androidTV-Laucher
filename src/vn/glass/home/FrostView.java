@@ -136,13 +136,51 @@ final class FrostView extends View {
 
     private static int clamp(int v, int size) { return Math.max(0, Math.min(size - 1, v)); }
 
-    /** Nhoè rẻ: thu nhỏ còn ~1/24 rồi để bộ vẽ phóng lại bằng lọc song tuyến. */
+    /**
+     * Nhoè đều mọi hướng (gần như Gauss): thu ảnh còn 1/8 theo cả hai chiều cùng tỉ lệ, chạy ba lượt nhoè hộp ngang +
+     * dọc, rồi để bộ vẽ phóng lại. Trước đây chỉ thu còn 1/24 rồi phóng bằng lọc song tuyến: ảnh quá thô, phóng ra lộ
+     * vệt kéo dài theo hàng / cột điểm ảnh (nhìn như bị kéo ngang). Chạy ở luồng nền, ảnh nhỏ (~240x135) nên nhanh.
+     */
     static Bitmap blur(Bitmap src) {
         Bitmap b = src;
-        int w = Math.max(8, src.getWidth() / 24), h = Math.max(8, src.getHeight() / 24);
-        while (b.getWidth() / 2 >= w) b = Bitmap.createScaledBitmap(b, b.getWidth() / 2, b.getHeight() / 2, true);
-        return Bitmap.createScaledBitmap(b, w, h, true);
+        int w = Math.max(16, src.getWidth() / 8), h = Math.max(9, Math.round(src.getHeight() * (w / (float) src.getWidth())));
+        while (b.getWidth() / 2 >= w && b.getHeight() / 2 >= h)
+            b = Bitmap.createScaledBitmap(b, b.getWidth() / 2, b.getHeight() / 2, true);
+        b = Bitmap.createScaledBitmap(b, w, h, true);
+        int[] px = new int[w * h], tmp = new int[w * h];
+        b.getPixels(px, 0, w, 0, 0, w, h);
+        int r = 4;
+        for (int pass = 0; pass < 3; pass++) {
+            boxBlur(px, tmp, w, h, r, true);
+            boxBlur(tmp, px, w, h, r, false);
+        }
+        Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        out.setPixels(px, 0, w, 0, 0, w, h);
+        return out;
     }
+
+    /** Một lượt nhoè hộp bán kính r theo hàng (ngang) hoặc cột (dọc), mép lấy điểm ảnh sát mép. */
+    private static void boxBlur(int[] in, int[] out, int w, int h, int r, boolean horiz) {
+        int lines = horiz ? h : w, len = horiz ? w : h, div = r * 2 + 1;
+        for (int l = 0; l < lines; l++) {
+            int sa = 0, sr = 0, sg = 0, sb = 0;
+            for (int i = -r; i <= r; i++) {
+                int c = in[idx(l, Math.max(0, Math.min(len - 1, i)), w, horiz)];
+                sa += c >>> 24; sr += (c >> 16) & 0xFF; sg += (c >> 8) & 0xFF; sb += c & 0xFF;
+            }
+            for (int i = 0; i < len; i++) {
+                out[idx(l, i, w, horiz)] = ((sa / div) << 24) | ((sr / div) << 16) | ((sg / div) << 8) | (sb / div);
+                int cin = in[idx(l, Math.min(len - 1, i + r + 1), w, horiz)];
+                int cout = in[idx(l, Math.max(0, i - r), w, horiz)];
+                sa += (cin >>> 24) - (cout >>> 24);
+                sr += ((cin >> 16) & 0xFF) - ((cout >> 16) & 0xFF);
+                sg += ((cin >> 8) & 0xFF) - ((cout >> 8) & 0xFF);
+                sb += (cin & 0xFF) - (cout & 0xFF);
+            }
+        }
+    }
+
+    private static int idx(int line, int i, int w, boolean horiz) { return horiz ? line * w + i : i * w + line; }
 
     /** Trượt khay theo chiều ngang (dock dài hơn màn hình); ảnh nhoè đứng yên theo nền. */
     void setShift(float s) { setShift(s, shiftY); }

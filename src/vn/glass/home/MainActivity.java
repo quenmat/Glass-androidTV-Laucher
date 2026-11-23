@@ -154,6 +154,11 @@ public class MainActivity extends Activity {
         setContentView(root);
         watchTvProvider(true);
         watchNetwork(true);
+        watchScreen();
+        // box vừa khởi động là một lần "bật tivi"; launcher bị hệ thống dọn rồi mở lại (cùng lần khởi động) thì không
+        long boot = (System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime()) / 60_000L;
+        wakePending = Math.abs(prefs().getLong("nhac_boot", -10) - boot) > 1;
+        if (wakePending) prefs().edit().putLong("nhac_boot", boot).apply();
         // mở bằng nút APPS khi launcher chưa chạy: dựng xong giao diện rồi sang ảnh kế tiếp
         String act = getIntent() == null ? null : getIntent().getAction();
         if (isAppsButton(act)) root.post(this::nextBackground);
@@ -182,6 +187,7 @@ public class MainActivity extends Activity {
         if (live != null && live.get() == this) live = null;
         watchTvProvider(false);
         watchNetwork(false);
+        if (screenRx != null) try { unregisterReceiver(screenRx); } catch (Exception ignored) {}
         bg.shutdownNow();
         net.shutdownNow();
         super.onDestroy();
@@ -230,6 +236,8 @@ public class MainActivity extends Activity {
         ui.removeCallbacks(bgRotate); ui.postDelayed(bgRotate, bgRotateMs());
         ui.removeCallbacks(ytTick); ui.post(ytTick);   // quay về màn hình chính: đủ 10 phút từ lượt trước thì xem lại ngay
         redrawIfStale();   // ô trận đã hết giờ trong lúc xem app khác: bỏ ngay, không đợi lượt tải
+        refreshWeather();  // số thời tiết sẵn trước khi mở bảng lịch (chỉ khi đã cũ)
+        ui.removeCallbacks(remindLater); ui.postDelayed(remindLater, 1500);
         armSaver();   // đứng yên ở màn hình chính 5 phút thì hiện màn hình chờ
         // lịch phát sóng sẵn trong bộ nhớ trước khi mở bảng kênh; cũ thì tải lại ở nền
         for (Apps.App a : apps) if (a.tv) { bg.execute(() -> { Epg.load(this); Epg.refreshIfStale(this); }); break; }
@@ -259,11 +267,14 @@ public class MainActivity extends Activity {
         stopThumbPreview(false);
         if (chCard == null) TvPreview.releaseAll();
         if (settings != null) settings.close(false);   // rời màn hình chính: đóng bảng, tắt máy chủ nhận ảnh
+        closeCal(false);
+        ui.removeCallbacks(remindLater);
+        hideRemind(false);
         ui.removeCallbacks(showHomePrompt);
         if (homePrompt != null) { root.removeView(homePrompt); homePrompt = null;
             tray.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
             shelfRow.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
-            gear.setFocusable(true); }
+            gear.setFocusable(true); clock.setFocusable(true); }
     }
 
     @Override
@@ -286,6 +297,7 @@ public class MainActivity extends Activity {
         if ("vn.glass.home.NEXT_BG".equals(act) && intent.getStringExtra("file") != null) { showWallpaper(intent.getStringExtra("file")); return; }
         if (isAppsButton(act) || "vn.glass.home.NEXT_BG".equals(act)) { nextBackground(); return; }
         closeAllApps();
+        closeCal(true);
         if (settings != null) settings.close(true);
         // bấm Home khi đang ở chính launcher: về dock. Quay về từ app khác (launcher chưa resume) thì giữ ô thumb đang chọn
         if (inShelf && resumedNow) exitShelf();
@@ -346,10 +358,26 @@ public class MainActivity extends Activity {
         // dạt trái nửa bề rộng nút để cả cụm giờ + nút vẫn ở chính giữa, nút hiện dần ra
         clockShift = (px(CLOCK_GAP) + px(GEAR)) / 2f;
         int clockLeft = (px(1920) - clockW) / 2;
+        // đồng hồ là bản gọn của bảng lịch: chọn được (từ thẻ lịch thi đấu bấm phải), lúc chọn có viên sáng mờ phía sau
+        // như ô đang chọn, nút Cài đặt hiện mờ bên cạnh; bấm OK mở bảng lịch
+        clockPill = new View(this);
+        GradientDrawable pill = new GradientDrawable();
+        pill.setCornerRadius(px(GEAR / 2f));
+        pill.setColor(0xF2FFFFFF);   // chọn đồng hồ: viên trắng đặc, giờ chữ tối (cùng kiểu nút đang chọn)
+        clockPill.setBackground(pill);
+        clockPill.setAlpha(0f);
+        FrameLayout.LayoutParams lpl = new FrameLayout.LayoutParams(clockW + px(PILL_PAD * 2), px(GEAR), Gravity.TOP | Gravity.START);
+        lpl.setMargins(clockLeft - px(PILL_PAD), px(TOP_Y), 0, 0);
+        root.addView(clockPill, lpl);
         FrameLayout.LayoutParams lc = new FrameLayout.LayoutParams(clockW, px(GEAR), Gravity.TOP | Gravity.START);
         lc.setMargins(clockLeft, px(TOP_Y), 0, 0);
         root.addView(clock, lc);
-        buildGear(Math.round(clockLeft - clockShift) + clockW + px(CLOCK_GAP));
+        clock.setFocusable(true);
+        clock.setFocusableInTouchMode(true);
+        clock.setDefaultFocusHighlightEnabled(false);
+        clock.setOnFocusChangeListener((v, has) -> { ui.removeCallbacks(syncTopLater); ui.post(syncTopLater); });
+        clock.setOnClickListener(v -> openCal());
+        buildGear(Math.round(clockLeft - clockShift) + clockW + px(PILL_PAD + CLOCK_GAP));
 
         buildTicker();       // cột giá BTC, ETH, vàng dưới đồng hồ, cùng chất kính với dock
         buildEpl();          // thẻ lịch Ngoại hạng Anh bên trái, kính đậm
@@ -364,14 +392,17 @@ public class MainActivity extends Activity {
 
     private static final int GEAR = 60;
     private static final int TOP_Y = 36;          // mép trên của hàng trên cùng (cụm giờ, thẻ lịch, thẻ giá)
-    private static final int CLOCK_SIZE = 42, CLOCK_GAP = 14;
+    private static final int CLOCK_SIZE = 42, CLOCK_GAP = 12, PILL_PAD = 22;
     private FrameLayout gear;
+    private View clockPill;
+    private GradientDrawable gearDot;
+    private ImageView gearIcon;
     private float clockShift;   // giờ dạt trái chừng này khi nút Cài đặt hiện ra
 
     /** left: toạ độ điểm ảnh thật (đã nhân tỉ lệ màn hình), chỗ của nút khi đã hiện (giờ đã dạt trái). */
     private void buildGear(int left) {
         gear = new FrameLayout(this);
-        gear.setFocusable(true);
+        gear.setFocusable(true); clock.setFocusable(true);
         gear.setFocusableInTouchMode(true);
         // nút ẩn hẳn khi không được chọn (vẫn nhận được lựa chọn); chọn thì hiện thành nút tròn trắng đặc, biểu tượng
         // tối, như nút Apple TV
@@ -379,27 +410,292 @@ public class MainActivity extends Activity {
         dot.setShape(GradientDrawable.OVAL);
         dot.setColor(0xF2FFFFFF);
         gear.setBackground(dot);
+        gear.setDefaultFocusHighlightEnabled(false);
+        gearDot = dot;
         ImageView ic = new ImageView(this);
         ic.setImageDrawable(new GearIcon());   // vẽ vector: mép sắc ở mọi cỡ, kể cả lúc nút phóng to
         ic.setColorFilter(0xFF1C1C1E);
+        gearIcon = ic;
         FrameLayout.LayoutParams li = new FrameLayout.LayoutParams(px(GEAR * 0.56f), px(GEAR * 0.56f), Gravity.CENTER);
         gear.addView(ic, li);
         gear.setAlpha(0f);
         gear.setScaleX(0.8f); gear.setScaleY(0.8f);
-        // chọn: giờ dạt trái êm, nút nở ra từ chỗ giờ vừa nhường (chậm, mượt); bỏ chọn: nút thu lại tắt dần, giờ về giữa
-        gear.setOnFocusChangeListener((v, has) -> {
-            dimGlow(has || inShelf);   // rời xuống hàng thumb: quầng ô app vẫn tắt như lúc vào hàng từ dock
-            clock.animate().cancel();
-            clock.animate().translationX(has ? -clockShift : 0f).setInterpolator(EASE).setDuration(560).start();
-            gear.animate().cancel();
-            gear.animate().alpha(has ? 1f : 0f).scaleX(has ? 1.1f : 0.8f).scaleY(has ? 1.1f : 0.8f)
-                    .setStartDelay(has ? 90 : 0).setInterpolator(EASE).setDuration(has ? 520 : 380).start();
-        });
+        // trạng thái cụm giờ + nút tính sau khi lựa chọn đã chuyển xong (đồng hồ <-> nút là hai sự kiện liền nhau:
+        // xử lý từng sự kiện thì giờ giật về giữa rồi lại dạt ra)
+        gear.setOnFocusChangeListener((v, has) -> { ui.removeCallbacks(syncTopLater); ui.post(syncTopLater); });
         gear.setOnClickListener(v -> openSettings());
         gear.setOnLongClickListener(v -> { openSystemSettings(); return true; });
         FrameLayout.LayoutParams lg = new FrameLayout.LayoutParams(px(GEAR), px(GEAR), Gravity.TOP | Gravity.START);
         lg.setMargins(left, px(TOP_Y), 0, 0);   // cùng hàng, cùng chiều cao với đồng hồ
         root.addView(gear, lg);
+    }
+
+    private final Runnable syncTopLater = this::syncTop;
+    private int topState = -1;   // 0: không chọn gì, 1: chọn đồng hồ (hoặc bảng lịch đang mở), 2: chọn nút Cài đặt
+    private ValueAnimator gearTone;
+
+    /**
+     * Cụm giờ + Cài đặt theo lựa chọn hiện tại. Không chọn: chỉ có giờ ở chính giữa. Chọn đồng hồ: giờ dạt trái, nằm
+     * trong viên trắng đặc, chữ tối; nút Cài đặt bên cạnh chỉ là biểu tượng nhỏ mờ, không nền. Chọn nút: viên sau giờ
+     * tắt, giờ về chữ sáng, nút nở ra thành nút trắng đặc, biểu tượng tối. Thứ đang chọn luôn là thứ duy nhất trắng đặc.
+     */
+    private void syncTop() {
+        int st = clock.hasFocus() || cal != null ? 1 : gear.hasFocus() ? 2 : 0;
+        if (st == topState) return;
+        boolean wasOpen = topState > 0;
+        topState = st;
+        boolean open = st > 0;
+        if (open != wasOpen) dimGlow(open || inShelf);
+        if ((st == 1) != wasClock) toneClock(st == 1);
+        wasClock = st == 1;   // rời xuống hàng thumb: quầng ô app vẫn tắt như lúc vào hàng từ dock
+        float tx = open ? -clockShift : 0f;
+        // không cancel(): chỉ thay đích dời ngang, nhịp lún của pressClock (độ co) chạy tiếp
+        clock.animate().translationX(tx).setInterpolator(EASE).setDuration(560).start();
+        clockPill.animate().translationX(tx).alpha(st == 1 ? 1f : 0f).setInterpolator(EASE).setDuration(st == 1 ? 520 : 420).start();
+        float sc = st == 2 ? 1.1f : 0.8f;
+        gear.animate().cancel();
+        gear.animate().alpha(open ? 1f : 0f).scaleX(sc).scaleY(sc)
+                .setStartDelay(open && !wasOpen ? 90 : 0).setInterpolator(EASE).setDuration(open ? 520 : 380).start();
+        // nền nút: trắng đặc lúc chọn, kính mờ lúc chỉ đứng cạnh đồng hồ; biểu tượng đổi màu theo
+        int dotTo = st == 2 ? 0xF2FFFFFF : 0x00FFFFFF, icTo = st == 2 ? 0xFF1C1C1E : 0x8CFFFFFF;
+        if (!open) return;   // đang tắt dần: giữ màu cũ tới hết
+        if (gearTone != null) gearTone.cancel();
+        int dotFrom = gearDot.getColor() != null ? gearDot.getColor().getDefaultColor() : dotTo;
+        int icFrom = gearIconColor;
+        gearTone = ValueAnimator.ofFloat(0f, 1f);
+        gearTone.setDuration(wasOpen ? 420 : 0);
+        gearTone.setInterpolator(EASE);
+        android.animation.ArgbEvaluator ev = new android.animation.ArgbEvaluator();
+        gearTone.addUpdateListener(a -> {
+            float f = (float) a.getAnimatedValue();
+            gearDot.setColor((int) ev.evaluate(f, dotFrom, dotTo));
+            gearIconColor = (int) ev.evaluate(f, icFrom, icTo);
+            gearIcon.setColorFilter(gearIconColor);
+        });
+        gearTone.start();
+    }
+
+    private int gearIconColor = 0xFF1C1C1E;
+    private boolean wasClock;
+    private int clockRest = 0xB3FAF6EE, clockShadowA = 0x2E;   // màu giờ theo nền (tuneClock), dùng lúc không chọn
+
+    /** Giờ chữ tối trong viên trắng lúc chọn, về màu theo nền lúc thôi chọn. */
+    private void toneClock(boolean selected) {
+        int to = selected ? 0xFF1C1C1E : clockRest;
+        if (clockTone != null) clockTone.cancel();
+        clockTone = ValueAnimator.ofArgb(clock.getCurrentTextColor(), to);
+        clockTone.setDuration(420);
+        clockTone.setInterpolator(EASE);
+        clockTone.addUpdateListener(a -> clock.setTextColor((int) a.getAnimatedValue()));
+        clockTone.start();
+        if (selected) clock.setShadowLayer(0, 0, 0, 0);
+        else clock.setShadowLayer(px(8), 0, px(1), clockShadowA << 24);
+    }
+
+    // ---------- bảng lịch: mở từ đồng hồ ----------
+
+    private static final int CAL_TOP = TOP_Y + GEAR + 16;
+    private FrameLayout cal;
+    private CalView calView;
+    private FrostView calFrost;
+    private final java.util.concurrent.atomic.AtomicBoolean wxBusy = new java.util.concurrent.atomic.AtomicBoolean(),
+            daysBusy = new java.util.concurrent.atomic.AtomicBoolean();
+
+    private void openCal() {
+        if (cal != null || settings != null || allApps != null || homePrompt != null) return;
+        hideRemind(true);
+        int sw = getResources().getDisplayMetrics().widthPixels, sh = getResources().getDisplayMetrics().heightPixels;
+        calView = new CalView(this, px(1000) / 1000f, this::fontFor, Weather.cached(this));
+        int w = px(CalView.W), h = px(calView.designHeight());
+        int left = (px(1920) - w) / 2, top = px(CAL_TOP);
+        cal = new FrameLayout(this);
+        cal.setFocusable(false);
+        calFrost = new FrostView(this, px(26), sw, sh, left, top, Math.max(1, px(1))).deep();
+        if (lastBlur != null) calFrost.setImage(lastBlur);
+        cal.addView(calFrost, new FrameLayout.LayoutParams(-1, -1));
+        cal.addView(calView, new FrameLayout.LayoutParams(-1, -1));
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(w, h, Gravity.TOP | Gravity.START);
+        lp.leftMargin = left; lp.topMargin = top;
+        root.addView(cal, lp);
+        // thả xuống từ đồng hồ: hiện dần, nở nhẹ từ mép trên
+        cal.setPivotX(w / 2f); cal.setPivotY(0f);
+        cal.setAlpha(0f); cal.setScaleX(0.96f); cal.setScaleY(0.92f); cal.setTranslationY(-px(14));
+        cal.animate().alpha(1f).scaleX(1f).scaleY(1f).translationY(0f).setInterpolator(EASE).setDuration(560).withLayer().start();
+        syncRowWithEpl();   // hàng banner nhường chỗ cho bảng
+        syncTop();
+        pressClock();
+        refreshWeather();
+    }
+
+    /** Bấm OK ở đồng hồ: giờ và viên sáng lún nhẹ rồi bật lại, như ô app lúc bấm. */
+    private void pressClock() {
+        for (View v : new View[]{clock, clockPill}) {
+            v.animate().scaleX(0.94f).scaleY(0.94f).setDuration(150).setInterpolator(EASE)
+                    .withEndAction(() -> v.animate().scaleX(1f).scaleY(1f).setDuration(420).setInterpolator(EASE).start()).start();
+        }
+    }
+
+    /** Đóng bảng lịch; lựa chọn ở lại đồng hồ. */
+    private void closeCal(boolean animate) {
+        FrameLayout c = cal;
+        if (c == null) return;
+        cal = null; calView = null; calFrost = null;
+        c.animate().cancel();
+        if (animate) {
+            c.animate().alpha(0f).scaleX(0.97f).scaleY(0.94f).translationY(-px(10)).setInterpolator(EASE).setDuration(380)
+                    .withLayer().withEndAction(() -> root.removeView(c)).start();
+        } else {
+            root.removeView(c);
+        }
+        syncRowWithEpl();
+        syncTop();
+        if (animate) pressClock();
+    }
+
+    // ---------- thẻ nhắc ngày đáng nhớ: thả xuống dưới giờ, mỗi ngày nhắc hiện một lần ----------
+
+    private FrameLayout remindCard;
+    private int remindCheckedDay = -1;
+
+    // tivi vừa bật (box khởi động hoặc màn hình vừa sáng lại sau khi tắt): lần đầu tới màn hình chính sau đó thì nhắc
+    private boolean wakePending;
+    private android.content.BroadcastReceiver screenRx;
+
+    /** Theo dõi tắt / bật màn hình (tắt tivi bằng điều khiển là màn hình tắt, box vẫn chạy). */
+    private void watchScreen() {
+        screenRx = new android.content.BroadcastReceiver() {
+            @Override public void onReceive(android.content.Context c, Intent i) {
+                if (Intent.ACTION_SCREEN_OFF.equals(i.getAction())) { wakePending = true; hideRemind(false); }
+                else if (Intent.ACTION_SCREEN_ON.equals(i.getAction())) { ui.removeCallbacks(remindLater); ui.postDelayed(remindLater, 1500); }
+            }
+        };
+        android.content.IntentFilter f = new android.content.IntentFilter(Intent.ACTION_SCREEN_OFF);
+        f.addAction(Intent.ACTION_SCREEN_ON);
+        registerReceiver(screenRx, f);
+    }
+
+    /**
+     * Thẻ nhắc khi màn hình chính đang trống, không che gì: đúng ngày nhắc thì mỗi lần bật tivi nhắc một lần; lần
+     * nhắc bị lỡ (box tắt hôm đó...) thì nhắc bù một lần. Quay về từ app khác không nhắc lại.
+     */
+    private void maybeRemind() {
+        if (!resumedNow || saverOn || remindCard != null || cal != null || settings != null || allApps != null
+                || homePrompt != null) return;
+        boolean wake = wakePending;
+        wakePending = false;
+        java.util.Set<String> shown = new java.util.HashSet<>(prefs().getStringSet("nhac_da_hien_v3", java.util.Collections.emptySet()));
+        Days.Due u = Days.reminder(this, shown, wake);
+        if (u == null) return;
+        if (shown.size() > 40) shown.clear();   // khoá cũ (sự kiện đã qua) không cần giữ mãi
+        shown.add(u.key);
+        prefs().edit().putStringSet("nhac_da_hien_v3", shown).apply();
+        showRemind(u);
+    }
+
+    private static final String[] THU_NGAN = {"Chủ Nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy"};
+
+    private void showRemind(Days.Due u) {
+        int sw = getResources().getDisplayMetrics().widthPixels, sh = getResources().getDisplayMetrics().heightPixels;
+        // thẻ dài theo lời nhắc (hiện đủ, không cắt "..."): tối thiểu 560, tối đa 1240 (giữa thẻ bóng đá và thẻ giá);
+        // dài hơn nữa thì xuống hai dòng
+        TextView t1 = text(500, 22, 0xEBFFFFFF);
+        t1.setText(u.text);
+        String sub = u.when();
+        TextView t2 = text(400, 18, 0x99FFFFFF);
+        t2.setText(sub);
+        float need = Math.max(t1.getPaint().measureText(u.text), t2.getPaint().measureText(sub)) + px(88 + 32);
+        boolean two = need > px(1240);
+        int w = Math.max(px(560), Math.min(px(1240), (int) Math.ceil(need)));
+        int h = px(two ? 126 : 96), left = (px(1920) - w) / 2, top = px(CAL_TOP);
+        FrameLayout box = new FrameLayout(this);
+        box.setFocusable(false);
+        FrostView f = new FrostView(this, px(24), sw, sh, left, top, Math.max(1, px(1))).deep();
+        if (lastBlur != null) f.setImage(lastBlur);
+        box.addView(f, new FrameLayout.LayoutParams(-1, -1));
+        // tờ lịch nhỏ: dải cam ghi tháng, số ngày to ở giữa
+        String month = "TH" + u.mm;
+        String day = String.valueOf(u.dd);
+        View page = new View(this) {
+            final Paint pt = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.SUBPIXEL_TEXT_FLAG);
+            final android.graphics.RectF r = new android.graphics.RectF();
+            final android.graphics.Path clip = new android.graphics.Path();
+            @Override protected void onDraw(Canvas c) {
+                float W = getWidth(), H = getHeight(), rad = px(12);
+                r.set(0, 0, W, H);
+                pt.setStyle(Paint.Style.FILL);
+                pt.setColor(0xF0FAF6EE);
+                c.drawRoundRect(r, rad, rad, pt);
+                clip.reset();
+                clip.addRoundRect(r, rad, rad, android.graphics.Path.Direction.CW);
+                c.save();
+                c.clipPath(clip);
+                pt.setColor(0xFFE8964A);
+                c.drawRect(0, 0, W, px(16), pt);
+                c.restore();
+                pt.setTextAlign(Paint.Align.CENTER);
+                pt.setTypeface(fontFor(700, 10));
+                pt.setTextSize(px(10));
+                pt.setColor(0xF2FFFFFF);
+                c.drawText(month, W / 2, px(12), pt);
+                pt.setTypeface(fontFor(600, 26));
+                pt.setTextSize(px(26));
+                pt.setColor(0xFF1C1C20);
+                c.drawText(day, W / 2, px(45), pt);
+            }
+        };
+        FrameLayout.LayoutParams lpg = new FrameLayout.LayoutParams(px(50), px(54), Gravity.START | Gravity.CENTER_VERTICAL);
+        lpg.leftMargin = px(21);
+        box.addView(page, lpg);
+        t1.setMaxLines(2);
+        t1.setLineSpacing(px(4), 1f);
+        FrameLayout.LayoutParams l1 = new FrameLayout.LayoutParams(-1, -2, Gravity.TOP | Gravity.START);
+        l1.setMargins(px(88), px(22), px(24), 0);
+        box.addView(t1, l1);
+        t2.setSingleLine(true);
+        FrameLayout.LayoutParams l2 = new FrameLayout.LayoutParams(-1, -2, Gravity.TOP | Gravity.START);
+        l2.setMargins(px(88), px(two ? 86 : 56), px(24), 0);
+        box.addView(t2, l2);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(w, h, Gravity.TOP | Gravity.START);
+        lp.leftMargin = left; lp.topMargin = top;
+        root.addView(box, lp);
+        remindCard = box;
+        // thả xuống từ dưới giờ, chậm và êm; 30 giây sau (hoặc bấm phím bất kỳ) thu lên tắt dần
+        box.setAlpha(0f); box.setTranslationY(-px(14));
+        box.animate().alpha(1f).translationY(0f).setInterpolator(EASE).setDuration(620).withLayer().start();
+        ui.removeCallbacks(hideRemindLater);
+        ui.postDelayed(hideRemindLater, 30_000);
+    }
+
+    private final Runnable remindLater = this::maybeRemind;
+    private final Runnable hideRemindLater = () -> hideRemind(true);
+
+    private void hideRemind(boolean animate) {
+        FrameLayout b = remindCard;
+        if (b == null) return;
+        remindCard = null;
+        ui.removeCallbacks(hideRemindLater);
+        b.animate().cancel();
+        if (animate) b.animate().alpha(0f).translationY(-px(10)).setInterpolator(EASE).setDuration(460).withLayer()
+                .withEndAction(() -> root.removeView(b)).start();
+        else root.removeView(b);
+    }
+
+    /** Thời tiết + AQI cũ quá thì đọc lại ở nền; bảng lịch đang mở thì số mới hoà dần vào. */
+    private void refreshWeather() {
+        // ngày đáng nhớ từ Google Sheet (3 tiếng một lần): bảng đang mở thì chấm và dòng cuối theo bản mới
+        if (Days.stale(this) && daysBusy.compareAndSet(false, true)) {
+            net.execute(() -> {
+                boolean ch = Days.refresh(this);
+                daysBusy.set(false);
+                ui.post(() -> { if (ch && calView != null) calView.daysChanged(); maybeRemind(); });
+            });
+        }
+        if (!Weather.stale(this) || !wxBusy.compareAndSet(false, true)) return;
+        net.execute(() -> {
+            Weather.Now n = Weather.refresh(this);
+            wxBusy.set(false);
+            ui.post(() -> { if (calView != null) calView.setWeather(n); });
+        });
     }
 
     private void buildTray() {
@@ -591,6 +887,8 @@ public class MainActivity extends Activity {
             frost.setImage(c);
             for (FrostView f : tickFrost) if (f != null) f.setImage(c);
             if (eplFrost != null) eplFrost.setImage(c);
+            if (calFrost != null) calFrost.setImage(c);
+            tuneClock(c);
             return;
         }
         bg.execute(() -> {
@@ -600,8 +898,41 @@ public class MainActivity extends Activity {
                 frost.setImage(b);
                 for (FrostView f : tickFrost) if (f != null) f.setImage(b);
                 if (eplFrost != null) eplFrost.setImage(b);
+                if (calFrost != null) calFrost.setImage(b);
+                tuneClock(b);
             });
         });
+    }
+
+    private ValueAnimator clockTone;
+
+    /**
+     * Tương phản động cho giờ: đo độ sáng vùng ảnh nền ngay sau cụm giờ (giữa, sát mép trên). Nền tối thì giờ dịu hẳn
+     * (~50%, sáng quá trên nền tối là chói), nền sáng thì giờ đậm dần (~84%) và bóng chữ rõ hơn để vẫn đọc được.
+     * Đổi màu cùng nhịp hoà ảnh nền.
+     */
+    private void tuneClock(Bitmap b) {
+        if (clock == null || b == null) return;
+        int x0 = Math.round(b.getWidth() * 0.38f), x1 = Math.round(b.getWidth() * 0.62f);
+        int y1 = Math.max(1, Math.round(b.getHeight() * 0.14f));
+        double sum = 0; int n = 0;
+        for (int y = 0; y < y1; y++)
+            for (int x = x0; x < x1; x++) { sum += FrostView.glare(b.getPixel(x, y)); n++; }
+        float lum = n == 0 ? 0f : (float) (sum / n / 255.0);
+        float t = Math.max(0f, Math.min(1f, (lum - 0.12f) / 0.5f));   // tối hơn 12%: dịu nhất, sáng hơn 62%: đậm nhất
+        int alpha = Math.round(0x80 + (0xD6 - 0x80) * t);
+        int shadow = Math.round(0x1F + (0x52 - 0x1F) * t);
+        int to = (alpha << 24) | 0xFAF6EE;
+        clockRest = to; clockShadowA = shadow;
+        if (topState == 1) return;   // đang chọn đồng hồ: chữ tối trong viên trắng, đổi nền thì để lúc thôi chọn
+        int from = clock.getCurrentTextColor();
+        if (clockTone != null) clockTone.cancel();
+        clockTone = ValueAnimator.ofArgb(from, to);
+        clockTone.setDuration(700);
+        clockTone.setInterpolator(EASE);
+        clockTone.addUpdateListener(a -> clock.setTextColor((int) a.getAnimatedValue()));
+        clockTone.start();
+        clock.setShadowLayer(px(8), 0, px(1), shadow << 24);
     }
 
     // ---------- ô giá BTC + vàng (chỉ để theo dõi) ----------
@@ -856,7 +1187,7 @@ public class MainActivity extends Activity {
     private void syncRowWithEpl() {
         // cả hàng chỉ 1 hoặc 0 (nhường thẻ lịch); mờ nhẹ lúc đứng ở dock làm ở từng ô (ô có lớp đệm), không làm cả hàng:
         // đổi alpha cả hàng bắt GPU vẽ cả hàng ra lớp tạm mỗi khung, lúc từ dock bấm lên ô nở bị khựng
-        float a = inShelf || !eplCoversRow() ? 1f : 0f;
+        float a = inShelf || (!eplCoversRow() && cal == null) ? 1f : 0f;
         if (shelfRow.getAlpha() != a) shelfRow.animate().alpha(a).setDuration(360).start();
         // thẻ bóng đá: ở hàng thumb chỉ ẩn khi đang mở dạng đầy đủ (dài xuống chạm hàng); dạng gọn không che gì nên giữ nguyên
         // (đang bị tắt hay đang mờ dần để ẩn hẳn thì thôi, kẻo cắt ngang lần ẩn)
@@ -2337,7 +2668,7 @@ public class MainActivity extends Activity {
 
         tray.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         shelfRow.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
-        gear.setFocusable(false);
+        gear.setFocusable(false); clock.setFocusable(false);
         dimGlow(true);
         box.setAlpha(0f);
         card.setScaleX(0.96f); card.setScaleY(0.96f);
@@ -2380,7 +2711,7 @@ public class MainActivity extends Activity {
         v.animate().alpha(0f).setDuration(320).setInterpolator(EASE).withEndAction(() -> root.removeView(v)).start();
         tray.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
         shelfRow.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
-        gear.setFocusable(true);
+        gear.setFocusable(true); clock.setFocusable(true);
         cards.get(focused).requestFocus();
     }
 
@@ -2393,7 +2724,7 @@ public class MainActivity extends Activity {
         if (settings != null) return;
         tray.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         shelfRow.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
-        gear.setFocusable(false);
+        gear.setFocusable(false); clock.setFocusable(false);
         dimGlow(true);
         if (eplBox != null) eplBox.animate().alpha(0f).setDuration(320).start();   // bảng nằm đúng chỗ thẻ lịch
         settings = new SettingsPanel(this, new SettingsPanel.Host() {
@@ -2419,7 +2750,7 @@ public class MainActivity extends Activity {
         settings = null;
         tray.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
         shelfRow.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
-        gear.setFocusable(true);
+        gear.setFocusable(true); clock.setFocusable(true);
         if (eplBox != null) eplBox.animate().alpha(eplShelfAlpha()).setDuration(420).start();
         syncRowWithEpl();
         gear.requestFocus();   // đóng bảng: con trỏ về nút bánh răng như lúc mở
@@ -2636,7 +2967,7 @@ public class MainActivity extends Activity {
         // khoá dock + hàng nội dung phía sau để con trỏ không lọt ra ngoài bảng; tắt quầng "thở"
         tray.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         shelfRow.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
-        gear.setFocusable(false);
+        gear.setFocusable(false); clock.setFocusable(false);
         dimGlow(true);
         // bảng đã che kín: tạm ẩn màn Home bên dưới (ảnh nền, kính, dock) để mỗi khung khỏi vẽ thừa cả màn phía sau
         View panel = allApps;
@@ -3506,7 +3837,7 @@ public class MainActivity extends Activity {
         a.animate().alpha(0f).setDuration(260).withEndAction(() -> root.removeView(a)).start();
         tray.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
         shelfRow.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
-        gear.setFocusable(true);
+        gear.setFocusable(true); clock.setFocusable(true);
         cards.get(focused).requestFocus();   // focus về ô -> quầng sáng hiện lại và "thở"
     }
 
@@ -3821,12 +4152,15 @@ public class MainActivity extends Activity {
 
     private void showNotice(boolean fade) {
         String tet = Lunar.tetCountdown(java.util.Calendar.getInstance());
+        // ngày của nhà đánh dấu "Màn hình khoá" = Yes (trong khoảng nhắc): thêm một lượt trong vòng xoay
+        String mine = Days.lockLine(this);
         List<Integer> kinds = new ArrayList<>();
+        if (!mine.isEmpty()) kinds.add(-2);
         if (!tet.isEmpty()) kinds.add(-1);
         kinds.add(0); kinds.add(1);
         int k = kinds.get(noticeIdx % kinds.size());
         if (k < 0) {
-            android.text.SpannableString s = new android.text.SpannableString(tet);
+            android.text.SpannableString s = new android.text.SpannableString(k == -2 ? mine : tet);
             s.setSpan(new android.text.style.ForegroundColorSpan(0xA6FFE2B0), 0, s.length(), 0);   // vàng ấm dịu
             setNotice(s, fade);
             return;
@@ -3914,6 +4248,7 @@ public class MainActivity extends Activity {
             return true;
         }
         armSaver();
+        if (remindCard != null && e.getAction() == KeyEvent.ACTION_DOWN) hideRemind(true);
         if (homePrompt != null) {
             // hộp nhắc đặt làm màn hình chính: Quay lại = Để sau; phím hướng chuyển giữa hai nút
             int kc = e.getKeyCode();
@@ -3932,6 +4267,29 @@ public class MainActivity extends Activity {
             }
             if (kc == KeyEvent.KEYCODE_ALL_APPS || kc == KeyEvent.KEYCODE_MENU) return true;
             return super.dispatchKeyEvent(e);
+        }
+        if (cal != null) {
+            // bảng lịch: trái / phải xem tháng trước, tháng sau; OK, Quay lại, lên: đóng bảng (về đồng hồ);
+            // xuống: đóng bảng và xuống hàng banner / dock như khi đứng ở đồng hồ
+            if (e.getAction() == KeyEvent.ACTION_DOWN) {
+                int kc = e.getKeyCode();
+                if (kc == KeyEvent.KEYCODE_DPAD_LEFT || kc == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                    boolean right = kc == KeyEvent.KEYCODE_DPAD_RIGHT;
+                    if (calView.shift(right ? 1 : -1)) root.playSoundEffect(right
+                            ? android.view.SoundEffectConstants.NAVIGATION_RIGHT : android.view.SoundEffectConstants.NAVIGATION_LEFT);
+                } else if (kc == KeyEvent.KEYCODE_DPAD_DOWN) {
+                    root.playSoundEffect(android.view.SoundEffectConstants.NAVIGATION_DOWN);
+                    closeCal(true);
+                    focusBelowTop();
+                } else if (e.getRepeatCount() == 0 && (kc == KeyEvent.KEYCODE_BACK || kc == KeyEvent.KEYCODE_ESCAPE
+                        || kc == KeyEvent.KEYCODE_DPAD_UP || isOk(kc))) {
+                    root.playSoundEffect(kc == KeyEvent.KEYCODE_DPAD_UP
+                            ? android.view.SoundEffectConstants.NAVIGATION_UP : android.view.SoundEffectConstants.CLICK);
+                    closeCal(true);
+                    if (!clock.hasFocus()) clock.requestFocus();
+                }
+            }
+            return true;
         }
         if (e.getAction() == KeyEvent.ACTION_DOWN) {
             int kc = e.getKeyCode();
@@ -3959,10 +4317,10 @@ public class MainActivity extends Activity {
                     return true;
                 }
                 if (kc == KeyEvent.KEYCODE_DPAD_RIGHT) {
-                    // sang nút Cài đặt (đứng ngay sau đồng hồ ở giữa phía trên), thẻ gọn hay đầy đủ đều vậy
-                    if (gear.isFocusable()) {
+                    // sang đồng hồ (giữa phía trên; nút Cài đặt hiện ra cạnh giờ), thẻ gọn hay đầy đủ đều vậy
+                    if (clock.isFocusable()) {
                         root.playSoundEffect(android.view.SoundEffectConstants.NAVIGATION_RIGHT);
-                        gear.requestFocus();
+                        clock.requestFocus();
                     }
                     return true;
                 }
@@ -3978,19 +4336,51 @@ public class MainActivity extends Activity {
                 }
                 return true;   // trái: đứng yên (mép màn hình)
             }
-            if (allApps == null && gear.hasFocus()) {
-                // ở nút Cài đặt (giữa phía trên):
-                //   xuống: vào hàng banner nếu đang có, không thì về đúng ô app đang chọn trên dock
-                //   trái: về thẻ lịch thi đấu (nếu thẻ đang hiện), phải / lên: đứng yên
-                if (kc == KeyEvent.KEYCODE_DPAD_DOWN) {
-                    root.playSoundEffect(android.view.SoundEffectConstants.NAVIGATION_DOWN);
-                    focusBelowTop();
+            if (allApps == null && clock.hasFocus()) {
+                // ở đồng hồ (giữa phía trên):
+                //   OK: mở bảng lịch; phải: sang nút Cài đặt; trái: về thẻ lịch thi đấu (nếu thẻ đang hiện)
+                //   xuống: vào hàng banner nếu đang có, không thì về đúng ô app đang chọn trên dock; lên: đứng yên
+                if (kc == KeyEvent.KEYCODE_DPAD_CENTER || kc == KeyEvent.KEYCODE_ENTER || kc == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                    if (e.getRepeatCount() == 0) {
+                        root.playSoundEffect(android.view.SoundEffectConstants.CLICK);
+                        openCal();
+                    }
+                    return true;
+                }
+                if (kc == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                    if (gear.isFocusable()) {
+                        root.playSoundEffect(android.view.SoundEffectConstants.NAVIGATION_RIGHT);
+                        gear.requestFocus();
+                    }
                     return true;
                 }
                 if (kc == KeyEvent.KEYCODE_DPAD_LEFT) {
                     if (eplSelectable()) {
                         root.playSoundEffect(android.view.SoundEffectConstants.NAVIGATION_LEFT);
                         focusEpl(false);
+                    }
+                    return true;
+                }
+                if (kc == KeyEvent.KEYCODE_DPAD_DOWN) {
+                    root.playSoundEffect(android.view.SoundEffectConstants.NAVIGATION_DOWN);
+                    focusBelowTop();
+                    return true;
+                }
+                if (kc == KeyEvent.KEYCODE_DPAD_UP) return true;
+            }
+            if (allApps == null && gear.hasFocus()) {
+                // ở nút Cài đặt (ngay sau đồng hồ):
+                //   xuống: vào hàng banner nếu đang có, không thì về đúng ô app đang chọn trên dock
+                //   trái: về đồng hồ; phải / lên: đứng yên
+                if (kc == KeyEvent.KEYCODE_DPAD_DOWN) {
+                    root.playSoundEffect(android.view.SoundEffectConstants.NAVIGATION_DOWN);
+                    focusBelowTop();
+                    return true;
+                }
+                if (kc == KeyEvent.KEYCODE_DPAD_LEFT) {
+                    if (clock.isFocusable()) {
+                        root.playSoundEffect(android.view.SoundEffectConstants.NAVIGATION_LEFT);
+                        clock.requestFocus();
                     }
                     return true;
                 }
@@ -4016,7 +4406,7 @@ public class MainActivity extends Activity {
                 View next = cur == null ? null
                         : cur.focusSearch(kc == KeyEvent.KEYCODE_DPAD_LEFT ? View.FOCUS_LEFT : View.FOCUS_RIGHT);
                 ViewGroup row = inside(cur, shelfRow) ? shelfRow : inside(cur, tray) ? tray : null;
-                if (next == null || next == gear || (row != null && !inside(next, row))) return true;
+                if (next == null || next == gear || next == clock || (row != null && !inside(next, row))) return true;
             }
             if (allApps == null) {
                 // hàng nội dung nằm trên dock: từ dock bấm lên vào hàng (hàng trống thì lên thẳng thẻ lịch / Cài đặt),
@@ -4031,7 +4421,7 @@ public class MainActivity extends Activity {
                     boolean epl = fromRow ? eplBox.getVisibility() == View.VISIBLE && settings == null && homePrompt == null
                             : eplSelectable();
                     if (epl && (eplView.mode() != EplView.COMPACT || eplPart(true) != EplView.SEL_NONE)) focusEpl(true);
-                    else gear.requestFocus();
+                    else clock.requestFocus();
                     return true;
                 }
                 if (kc == KeyEvent.KEYCODE_DPAD_DOWN && inShelf) {
@@ -4050,6 +4440,8 @@ public class MainActivity extends Activity {
     private final Runnable clockTick = new Runnable() {
         @Override public void run() {
             clock.setText(new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date()));
+            int today = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_YEAR);
+            if (today != remindCheckedDay) { remindCheckedDay = today; ui.post(remindLater); }
             updateSaverText();
             ui.postDelayed(this, 15000);
         }
