@@ -116,7 +116,35 @@ final class Days {
      * theo ngày sự kiện + mốc nhắc) chỉ hiện một lần; shown là các khoá đã hiện. Riêng đúng ngày nhắc thì mỗi lần bật
      * tivi (wake) đều nhắc lại. Không có thì null.
      */
-    static Due reminder(Context c, java.util.Set<String> shown, boolean wake) { return next(c, shown, wake, false); }
+    static Due reminder(Context c, java.util.Set<String> shown, boolean wake) {
+        Due u = next(c, shown, wake, false);
+        return u != null ? u : incense(shown, wake);
+    }
+
+    /**
+     * Trước mùng 1, rằm (15 âm lịch) và ông Công ông Táo (23 tháng Chạp) đúng một ngày: "Mai mùng 1 tháng Mười Một,
+     * nhớ chuẩn bị đồ thắp hương". Cùng
+     * nhịp với ngày nhắc của nhà: hôm đó mỗi lần bật tivi nhắc một lần (ngày của nhà đến hạn thì nhường ngày của nhà).
+     */
+    private static Due incense(java.util.Set<String> shown, boolean wake) {
+        Calendar t = Calendar.getInstance();
+        t.add(Calendar.DAY_OF_MONTH, 1);
+        int dd = t.get(Calendar.DAY_OF_MONTH), mm = t.get(Calendar.MONTH) + 1, yy = t.get(Calendar.YEAR);
+        int[] l = Lunar.fromSolar(dd, mm, yy);
+        boolean tao = l[0] == 23 && l[1] == 12 && l[3] == 0;
+        if (l[0] != 1 && l[0] != 15 && !tao) return null;
+        Due u = new Due();
+        Ev e = new Ev();
+        e.d = l[0]; e.m = l[1]; e.lunar = true; e.name = tao ? "Ông Công ông Táo" : l[0] == 1 ? "Mùng 1" : "Rằm"; e.note = "";
+        u.e = e; u.days = 1; u.dd = dd; u.mm = mm; u.yy = yy;
+        u.key = "huong@" + dd + "/" + mm + "/" + yy;
+        if (shown.contains(u.key) && !wake) return null;
+        String what = tao ? "ông Công ông Táo"
+                : l[0] == 1 && l[1] == 1 && l[3] == 0 ? "mùng 1 Tết"
+                : (l[0] == 1 ? "mùng 1" : "rằm") + " tháng " + Lunar.monthName(l[1], l[3] == 1);
+        u.text = "Mai " + what + ", nhớ chuẩn bị đồ thắp hương";
+        return u;
+    }
 
     /** Mốc nhắc gần nhất đã tới khi còn n ngày (số ngày trước sự kiện của mốc đó), chưa tới mốc nào thì -1. */
     private static int slot(Ev e, int n) {
