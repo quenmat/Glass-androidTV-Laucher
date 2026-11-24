@@ -100,6 +100,9 @@ public class MainActivity extends Activity {
     private View scrim;
     private TextView clock, rowHead;
     private List<Shelf.Item> rowItems = Collections.emptyList();
+    // nội dung mỗi ô đang thật sự hiện: hàng vừa tải lại thì ô giữ ảnh cũ tới khi ảnh mới tải xong, trong lúc đó
+    // bấm ô phải mở đúng thứ trên ảnh cũ (không phải thứ mới cùng vị trí)
+    private final java.util.Map<View, Shelf.Item> tileItem = new java.util.HashMap<>();
     private String rowKey;
     private String rowApp;   // app của hàng đang hiện (để biết lần vẽ lại chỉ là hàng tải lại hay đã đổi app)
     private int shelfVersion;
@@ -2092,9 +2095,9 @@ public class MainActivity extends Activity {
             boolean has = i < items.size();
             t.setVisibility(has ? View.VISIBLE : View.INVISIBLE);
             t.setFocusable(has);
-            if (!has) continue;
+            if (!has) { tileItem.remove(t); continue; }
             Shelf.Item it = items.get(i);
-            images.into(thumbImage(t), it.art, px(thumbSize[0]) * 2, px(THUMB_R), sameApp);
+            images.into(thumbImage(t), it.art, px(thumbSize[0]) * 2, px(THUMB_R), sameApp, () -> tileItem.put(t, it));
             if (it.live && it.title != null && !it.title.isEmpty()) {
                 // đang phát trực tiếp: nhãn đỏ ngắn trước tên video
                 android.text.SpannableStringBuilder lt = new android.text.SpannableStringBuilder("● TRỰC TIẾP  ");
@@ -2737,8 +2740,8 @@ public class MainActivity extends Activity {
     /** Mở đúng nội dung; không mở được thì mở app của nội dung đó (hàng có thể trộn nhiều app). */
     private void openItem(int i, View src) {
         List<Shelf.Item> items = rowItems;
-        if (i >= items.size()) return;
-        Shelf.Item it = items.get(i);
+        Shelf.Item it = tileItem.get(src);
+        if (it == null) { if (i >= items.size()) return; it = items.get(i); }
         if (it.tvChannel != null) { playChannel(Tv.find(this, it.tvChannel), src); return; }
         if (it.gameUri != null) {
             launchGame(it.pkg, it.gameUri, it.gameActivity, src);
@@ -2747,8 +2750,11 @@ public class MainActivity extends Activity {
         }
         try {
             if (it.intent != null) {
-                startActivity(Intent.parseUri(it.intent, Intent.URI_INTENT_SCHEME)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), zoomFrom(src));
+                Intent in = Intent.parseUri(it.intent, Intent.URI_INTENT_SCHEME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                // lệnh mở màn cụ thể chỉ khác nhau ở phần gửi kèm (TV360: mã kênh): hệ thống coi là cùng một lệnh nên
+                // chỉ đưa màn đang xem dở lên (mở nhầm trận trước). Dọn task cũ để màn mở đúng trận vừa chọn.
+                if (in.getData() == null && in.getComponent() != null) in.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                startActivity(in, zoomFrom(src));
                 rememberOpened(it.pkg);
                 return;
             }

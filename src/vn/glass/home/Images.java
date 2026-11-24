@@ -72,17 +72,29 @@ final class Images {
 
     /** keepOld: view đang hiện ảnh khác (hàng của cùng một app vừa tải lại) thì giữ ảnh cũ tới khi ảnh mới sẵn sàng,
      *  rồi hoà dần ảnh mới đè lên ảnh cũ, thay vì xoá trắng ô. View đang hiện đúng ảnh này thì không làm gì. */
-    void into(ImageView v, String uri, int reqW, float radius, boolean keepOld) {
+    void into(ImageView v, String uri, int reqW, float radius, boolean keepOld) { into(v, uri, reqW, radius, keepOld, null); }
+
+    /** shown: chạy khi ô thôi hiện ảnh cũ (ảnh mới đã lên, hoặc ô đã xoá trắng), để bấm ô mở đúng thứ đang thấy. */
+    void into(ImageView v, String uri, int reqW, float radius, boolean keepOld, Runnable shown) {
         if (uri != null && uri.equals(v.getTag()) && v.getDrawable() != null) {
-            v.animate().cancel(); v.setAlpha(1f); return;
+            v.animate().cancel(); v.setAlpha(1f);
+            if (shown != null) shown.run();
+            return;
         }
         v.setTag(uri);
         boolean cached = uri != null && cache.get(uri + "@" + reqW) != null;
         boolean hold = keepOld && uri != null && v.getDrawable() != null && v.getAlpha() > 0.99f;
         if (!hold && !cached) { v.setImageDrawable(null); v.setAlpha(0f); }
+        if (!hold && shown != null) shown.run();
         load(uri, reqW, b -> {
             if (uri == null || !uri.equals(v.getTag())) return;
-            if (hold && b != null) {
+            if (hold && b == null) {
+                // ảnh mới không tải được: bỏ ảnh cũ, đừng để ô hiện thứ này mà bấm lại mở thứ khác
+                v.setImageDrawable(null); v.setAlpha(0f);
+                if (shown != null) shown.run();
+                return;
+            }
+            if (hold) {
                 // hoà ảnh mới vào trên ảnh cũ (ảnh cũ mờ đi cùng lúc), xong thì bỏ hẳn ảnh cũ cho nhẹ RAM
                 android.graphics.drawable.Drawable old = v.getDrawable();
                 if (old instanceof android.graphics.drawable.TransitionDrawable)
@@ -95,6 +107,7 @@ final class Images {
                 v.setAlpha(1f);
                 v.setImageDrawable(td);
                 td.startTransition(SWAP_MS);
+                if (shown != null) shown.run();
                 v.postDelayed(() -> { if (v.getDrawable() == td) v.setImageDrawable(fresh); }, SWAP_MS + 50);
                 return;
             }
