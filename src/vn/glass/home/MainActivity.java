@@ -154,11 +154,10 @@ public class MainActivity extends Activity {
         setContentView(root);
         watchTvProvider(true);
         watchNetwork(true);
-        watchScreen();
-        // box vừa khởi động là một lần "bật tivi"; launcher bị hệ thống dọn rồi mở lại (cùng lần khởi động) thì không
-        long boot = (System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime()) / 60_000L;
-        wakePending = Math.abs(prefs().getLong("nhac_boot", -10) - boot) > 1;
-        if (wakePending) prefs().edit().putLong("nhac_boot", boot).apply();
+        brief = Briefing.get(this);   // bản tin + nghe tắt/bật màn hình: sống theo tiến trình, không theo màn hình này
+        brief.host = briefHost;
+        MorningAlarm.schedule(this);   // lấy sẵn số thời tiết lúc 6:40 ngày thường cho bản tin sáng
+        ui.postDelayed(this::warmTop, 2500);
         // mở bằng nút APPS khi launcher chưa chạy: dựng xong giao diện rồi sang ảnh kế tiếp
         String act = getIntent() == null ? null : getIntent().getAction();
         if (isAppsButton(act)) root.post(this::nextBackground);
@@ -166,7 +165,7 @@ public class MainActivity extends Activity {
     }
 
     // một luồng nền dùng chung (đọc nội dung, làm nhoè kính); không tạo luồng mới mỗi lần
-    private final java.util.concurrent.ExecutorService bg = Executors.newSingleThreadExecutor();
+    private final java.util.concurrent.ExecutorService bg = Executors.newSingleThreadExecutor(new LowPriority("glass-nen"));
 
     /**
      * Rời màn hình chính (đang xem phim...): nhả ảnh tải sẵn và các nền màu vẽ sẵn để app đang chạy đủ RAM.
@@ -187,7 +186,7 @@ public class MainActivity extends Activity {
         if (live != null && live.get() == this) live = null;
         watchTvProvider(false);
         watchNetwork(false);
-        if (screenRx != null) try { unregisterReceiver(screenRx); } catch (Exception ignored) {}
+        if (brief != null && brief.host == briefHost) brief.host = null;   // không giữ màn hình đã đóng
         bg.shutdownNow();
         net.shutdownNow();
         super.onDestroy();
@@ -219,7 +218,9 @@ public class MainActivity extends Activity {
         }
         int ti = inShelf ? thumbs.indexOf(getCurrentFocus()) : -1;
         if (allApps == null && ti >= 0) {
-            scheduleThumbPreview(ti);   // ô kênh truyền hình: xem trước lại như lúc rời đi
+            // banner vừa mở: về cỡ thường rồi phóng ra lại như lúc mới chọn, mắt dễ thấy con trỏ đang ở đâu
+            // (lần chọn lại tự lên lịch xem trước cho ô kênh truyền hình như lúc rời đi)
+            replayThumb(thumbs.get(ti));
         } else if (allApps == null) {
             if (inShelf) shelfState(false);
             FrameLayout c = cards.get(focused);
@@ -288,6 +289,8 @@ public class MainActivity extends Activity {
         String act = intent.getStringExtra(FWD_ACTION) != null ? intent.getStringExtra(FWD_ACTION) : intent.getAction();
         // xem trước màn hình chờ từ máy tính (am start -a vn.glass.home.SAVER -n vn.glass.home/.MainActivity)
         if ("vn.glass.home.SAVER".equals(act)) { ui.post(this::showSaver); return; }
+        // xem thử bản tin sáng bất kể giờ (am start -a vn.glass.home.BANTIN -n vn.glass.home/.MainActivity)
+        if ("vn.glass.home.BANTIN".equals(act)) { ui.postDelayed(() -> { hideRemind(false); brief.preview(); }, 600); return; }
         // xem thử lịch thi đấu khi có trận đang đá / đã xong (am start -a vn.glass.home.EPL_DEMO ...), 1 phút rồi về thật
         if ("vn.glass.home.EPL_DEMO".equals(act)) { eplDemo(); return; }
         hideSaver(false);   // nút Home, APPS...: luôn đánh thức khỏi màn hình chờ
@@ -476,6 +479,31 @@ public class MainActivity extends Activity {
     }
 
     private int gearIconColor = 0xFF1C1C1E;
+
+    /**
+     * Chạy thử một lượt cụm giờ + nút Cài đặt lúc chưa ai chọn: nút và viên sáng hiện ở độ mờ gần như bằng 0 trong vài
+     * khung (mắt không thấy) để bộ vẽ dựng sẵn hình, và các hiệu ứng đổi màu / dời / nở chạy một lần cho máy dịch sẵn
+     * mã. Không có bước này thì lần chọn giờ đầu tiên sau khi bật tivi hay khựng, các lần sau mới mượt.
+     */
+    private final Runnable warmLater = this::warmTop;
+
+    private void warmTop() {
+        if (topState > 0 || gear == null) return;
+        gear.setAlpha(0.004f); clockPill.setAlpha(0.004f);
+        int dot = gearDot.getColor() != null ? gearDot.getColor().getDefaultColor() : 0xF2FFFFFF;
+        ValueAnimator a = ValueAnimator.ofFloat(0f, 1f);
+        a.setDuration(120);
+        a.setInterpolator(EASE);
+        android.animation.ArgbEvaluator ev = new android.animation.ArgbEvaluator();
+        a.addUpdateListener(x -> { gearDot.setColor((int) ev.evaluate((float) x.getAnimatedValue(), dot, dot)); gearIcon.setColorFilter(gearIconColor); });
+        a.start();
+        ui.postDelayed(() -> {
+            if (topState > 0) return;
+            gear.animate().alpha(0f).scaleX(0.8f).scaleY(0.8f).setInterpolator(EASE).setDuration(60).start();
+            clockPill.animate().alpha(0f).translationX(0f).setInterpolator(EASE).setDuration(60).start();
+            clock.animate().translationX(0f).setInterpolator(EASE).setDuration(60).start();
+        }, 200);
+    }
     private boolean wasClock;
     private int clockRest = 0xB3FAF6EE, clockShadowA = 0x2E;   // màu giờ theo nền (tuneClock), dùng lúc không chọn
 
@@ -488,8 +516,6 @@ public class MainActivity extends Activity {
         clockTone.setInterpolator(EASE);
         clockTone.addUpdateListener(a -> clock.setTextColor((int) a.getAnimatedValue()));
         clockTone.start();
-        if (selected) clock.setShadowLayer(0, 0, 0, 0);
-        else clock.setShadowLayer(px(8), 0, px(1), clockShadowA << 24);
     }
 
     // ---------- bảng lịch: mở từ đồng hồ ----------
@@ -557,22 +583,22 @@ public class MainActivity extends Activity {
     private FrameLayout remindCard;
     private int remindCheckedDay = -1;
 
-    // tivi vừa bật (box khởi động hoặc màn hình vừa sáng lại sau khi tắt): lần đầu tới màn hình chính sau đó thì nhắc
-    private boolean wakePending;
-    private android.content.BroadcastReceiver screenRx;
+    private Briefing brief;
 
-    /** Theo dõi tắt / bật màn hình (tắt tivi bằng điều khiển là màn hình tắt, box vẫn chạy). */
-    private void watchScreen() {
-        screenRx = new android.content.BroadcastReceiver() {
-            @Override public void onReceive(android.content.Context c, Intent i) {
-                if (Intent.ACTION_SCREEN_OFF.equals(i.getAction())) { wakePending = true; hideRemind(false); }
-                else if (Intent.ACTION_SCREEN_ON.equals(i.getAction())) { ui.removeCallbacks(remindLater); ui.postDelayed(remindLater, 1500); }
-            }
-        };
-        android.content.IntentFilter f = new android.content.IntentFilter(Intent.ACTION_SCREEN_OFF);
-        f.addAction(Intent.ACTION_SCREEN_ON);
-        registerReceiver(screenRx, f);
-    }
+    /** Cầu nối với bản tin (Briefing sống theo tiến trình): hiện thẻ khi được, nghe tắt / bật màn hình. */
+    private final Briefing.Host briefHost = new Briefing.Host() {
+        @Override public boolean canShowCard() {
+            return resumedNow && !saverOn && remindCard == null && cal == null && settings == null && allApps == null && homePrompt == null;
+        }
+        @Override public void showBrief(Morning.Brief b) { showMorning(b); }
+        @Override public void speakingChanged(boolean on) { if (morningView != null) morningView.setSpeaking(on); }
+        @Override public void briefSkipped() { maybeRemind(); }
+        @Override public void screenChanged(boolean on) {
+            if (!on) { hideRemind(false); return; }
+            ui.removeCallbacks(remindLater); ui.postDelayed(remindLater, 1500);
+            ui.removeCallbacks(warmLater); ui.postDelayed(warmLater, 500);   // vừa bật tivi: dựng sẵn cụm giờ
+        }
+    };
 
     /**
      * Thẻ nhắc khi màn hình chính đang trống, không che gì: đúng ngày nhắc thì mỗi lần bật tivi nhắc một lần; lần
@@ -580,9 +606,13 @@ public class MainActivity extends Activity {
      */
     private void maybeRemind() {
         if (!resumedNow || saverOn || remindCard != null || cal != null || settings != null || allApps != null
-                || homePrompt != null) return;
-        boolean wake = wakePending;
-        wakePending = false;
+                || homePrompt != null || brief.busy) return;
+        // bật tivi buổi sáng ngày thường (box vừa khởi động): bản tin sáng trước, thẻ nhắc sau
+        if (brief.remindWake && !brief.done) { brief.onWake(); return; }
+        // bản tin đã đọc lúc đang ở app khác: về màn hình chính thì hiện thẻ (một lần), thẻ nhắc sau
+        if (brief.pending != null) { Morning.Brief mb = brief.pending; brief.pending = null; showMorning(mb); return; }
+        boolean wake = brief.remindWake;
+        brief.remindWake = false;
         java.util.Set<String> shown = new java.util.HashSet<>(prefs().getStringSet("nhac_da_hien_v3", java.util.Collections.emptySet()));
         Days.Due u = Days.reminder(this, shown, wake);
         if (u == null) return;
@@ -666,6 +696,34 @@ public class MainActivity extends Activity {
         ui.postDelayed(hideRemindLater, 30_000);
     }
 
+    // ---------- bản tin sáng: thẻ ở chỗ thẻ nhắc + giọng đọc Google (tiếng Việt) ----------
+
+    private boolean remindAfterMorning;
+    private MorningView morningView;
+
+    private void showMorning(Morning.Brief b) {
+        int sw = getResources().getDisplayMetrics().widthPixels, sh = getResources().getDisplayMetrics().heightPixels;
+        MorningView mv = new MorningView(this, px(1000) / 1000f, this::fontFor, b);
+        int w = px(MorningView.W), h = px(mv.designHeight()), left = (px(1920) - w) / 2, top = px(CAL_TOP);
+        FrameLayout box = new FrameLayout(this);
+        box.setFocusable(false);
+        FrostView f = new FrostView(this, px(26), sw, sh, left, top, Math.max(1, px(1))).deep();
+        if (lastBlur != null) f.setImage(lastBlur);
+        box.addView(f, new FrameLayout.LayoutParams(-1, -1));
+        box.addView(mv, new FrameLayout.LayoutParams(-1, -1));
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(w, h, Gravity.TOP | Gravity.START);
+        lp.leftMargin = left; lp.topMargin = top;
+        root.addView(box, lp);
+        remindCard = box;
+        morningView = mv;
+        remindAfterMorning = true;
+        box.setAlpha(0f); box.setTranslationY(-px(14));
+        box.animate().alpha(1f).translationY(0f).setInterpolator(EASE).setDuration(620).withLayer().start();
+        ui.removeCallbacks(hideRemindLater);
+        ui.postDelayed(hideRemindLater, 45_000);
+        if (brief.talking) mv.setSpeaking(true);
+    }
+
     private final Runnable remindLater = this::maybeRemind;
     private final Runnable hideRemindLater = () -> hideRemind(true);
 
@@ -673,6 +731,16 @@ public class MainActivity extends Activity {
         FrameLayout b = remindCard;
         if (b == null) return;
         remindCard = null;
+        if (morningView != null) {
+            // thẻ bản tin sáng thu lại (hết giờ, bấm phím, mở app khác): giọng vẫn đọc cho hết;
+            // thẻ nhắc (giỗ, rằm...) của lần bật này hiện tiếp sau một nhịp
+            morningView = null;
+            if (remindAfterMorning) {   // rời màn hình chính giữa chừng: thẻ nhắc đợi lần quay về
+                brief.remindWake = true;
+                if (animate) { ui.removeCallbacks(remindLater); ui.postDelayed(remindLater, 900); }
+            }
+            remindAfterMorning = false;
+        }
         ui.removeCallbacks(hideRemindLater);
         b.animate().cancel();
         if (animate) b.animate().alpha(0f).translationY(-px(10)).setInterpolator(EASE).setDuration(460).withLayer()
@@ -866,6 +934,13 @@ public class MainActivity extends Activity {
             v.animate().cancel();
             v.animate().scaleX(1.07f).scaleY(1.07f).translationZ(px(10)).setInterpolator(EASE).setDuration(150).start();
         }
+        // quầng co cùng ô (cỡ quầng ứng với ô đang chọn: ô lún từ SCALE xuống 1,07 thì quầng theo đúng tỉ lệ đó)
+        if (glowCur >= 0) {
+            if (breathe != null) { breathe.cancel(); breathe = null; }
+            ImageView g = glowViews[glowCur];
+            g.animate().cancel();
+            g.animate().scaleX(1.07f / SCALE_X).scaleY(1.07f / SCALE_Y).setInterpolator(EASE).setDuration(150).start();
+        }
     }
 
     /** Bật nảy trở lại cỡ đang chọn. */
@@ -883,11 +958,31 @@ public class MainActivity extends Activity {
         if (breathe != null) { breathe.cancel(); breathe = null; }
         ImageView g = glowViews[glowCur];
         g.animate().cancel();
-        // loé sáng bằng độ sáng (không phình to: lỗ khoét phải khít mép ô)
-        g.animate().alpha(1f).setDuration(200).setInterpolator(EASE)
-                .withEndAction(() -> g.animate().alpha(GLOW_MOVING).setDuration(600).setInterpolator(EASE)
-                        .withEndAction(() -> startBreathing(g)).start()).start();
+        // bật về cỡ ô đang chọn cùng nhịp ô bật lại (420 ms), đồng thời loé sáng rồi dịu (hiệu ứng độ sáng chạy riêng
+        // để không cắt ngang hiệu ứng cỡ)
+        g.animate().scaleX(1f).scaleY(1f).setInterpolator(EASE).setDuration(420).start();
+        ObjectAnimator up = ObjectAnimator.ofFloat(g, View.ALPHA, g.getAlpha(), 1f);
+        up.setDuration(200);
+        up.setInterpolator(EASE);
+        ObjectAnimator down = ObjectAnimator.ofFloat(g, View.ALPHA, 1f, GLOW_MOVING);
+        down.setDuration(600);
+        down.setInterpolator(EASE);
+        if (glowFlash != null) glowFlash.cancel();
+        AnimatorSet flash = new AnimatorSet();
+        glowFlash = flash;
+        flash.playSequentially(up, down);
+        flash.addListener(new android.animation.AnimatorListenerAdapter() {
+            boolean cut;
+            @Override public void onAnimationCancel(android.animation.Animator a) { cut = true; }
+            @Override public void onAnimationEnd(android.animation.Animator a) {
+                if (glowFlash == flash) glowFlash = null;
+                if (!cut && breathe == null && glowCur >= 0 && glowViews[glowCur] == g) startBreathing(g);
+            }
+        });
+        flash.start();
     }
+
+    private AnimatorSet glowFlash;   // loé sáng lúc bấm mở app: sang ô khác / rời dock thì cắt
 
     /** Cửa sổ app phóng ra từ vị trí ô (Android hiện ngay màn hình chờ của app trong lúc app khởi động). */
     private android.os.Bundle zoomFrom(View src) {
@@ -1327,7 +1422,7 @@ public class MainActivity extends Activity {
     }
 
     // luồng riêng cho mạng (không làm chậm việc làm nhoè kính/đọc nội dung); lần gọi trước chưa xong thì bỏ qua
-    private final java.util.concurrent.ExecutorService net = Executors.newFixedThreadPool(2);
+    private final java.util.concurrent.ExecutorService net = Executors.newFixedThreadPool(2, new LowPriority("glass-mang"));
     private final java.util.concurrent.atomic.AtomicBoolean btcBusy = new java.util.concurrent.atomic.AtomicBoolean(),
             goldBusy = new java.util.concurrent.atomic.AtomicBoolean();
 
@@ -1441,6 +1536,7 @@ public class MainActivity extends Activity {
     }
 
     private void applyLift(float y) {
+        glowFollow(0f, y - tray.getTranslationY());
         tray.setTranslationY(y);
         frost.setShiftY(y);
         shelfRow.setTranslationY(y);
@@ -1466,11 +1562,18 @@ public class MainActivity extends Activity {
         dockAnim.setInterpolator(EASE);
         dockAnim.addUpdateListener(an -> {
             float s = (float) an.getAnimatedValue();
+            glowFollow(s - tray.getTranslationX(), 0f);
             tray.setTranslationX(s);
             frost.setShift(s);
         });
         dockAnim.start();
         dockShift = target;
+    }
+
+    /** Khay trượt / hạ: quầng sáng dời cùng một khoảng, luôn ôm đúng ô (không nhảy tới chỗ ô sẽ dừng). */
+    private void glowFollow(float dx, float dy) {
+        if (dx == 0f && dy == 0f) return;
+        for (ImageView g : glowViews) if (g != null) { g.setX(g.getX() + dx); g.setY(g.getY() + dy); }
     }
 
     /** Quầng cũ trượt sang ô mới và mờ đi, quầng mới (màu logo mới) trượt theo và hiện lên. */
@@ -1480,23 +1583,27 @@ public class MainActivity extends Activity {
             // tính theo vị trí đích của khay (đang trượt thì quầng tới thẳng chỗ ô sẽ dừng)
             // ô phóng đều từ tâm: quầng (cỡ ô đã phóng) đặt sao cho tâm trùng tâm ô
             // toạ độ nguyên: lỗ khoét trùng mép ô đang chọn từng điểm ảnh (không lệch nửa điểm ảnh gây mép gai)
-            float x = Math.round(tray.getLeft() + dockShift + cell.getLeft() - (px(SEL_W) - cell.getWidth()) / 2f) - px(GLOW_SPREAD);
-            float y = Math.round(tray.getTop() + dockLift + cell.getTop() - (px(SEL_H) - cell.getHeight()) / 2f) - px(GLOW_SPREAD);
+            // theo vị trí khay lúc này (khay đang trượt / hạ thì quầng được dời theo từng khung ở glowFollow)
+            float x = Math.round(tray.getLeft() + tray.getTranslationX() + cell.getLeft() - (px(SEL_W) - cell.getWidth()) / 2f) - px(GLOW_SPREAD);
+            float y = Math.round(tray.getTop() + tray.getTranslationY() + cell.getTop() - (px(SEL_H) - cell.getHeight()) / 2f) - px(GLOW_SPREAD);
             if (breathe != null) { breathe.cancel(); breathe = null; }
+            if (glowFlash != null) { glowFlash.cancel(); glowFlash = null; }
             int nextIdx = glowCur < 0 ? 0 : 1 - glowCur;
             ImageView next = glowViews[nextIdx];
             ImageView cur = glowCur < 0 ? null : glowViews[glowCur];
+            // quầng bám theo ô: nở ra cùng nhịp ô phóng to (từ cỡ ô thường lên cỡ ô đang chọn, cùng tâm, cùng đường
+            // cong, cùng 500 ms), quầng ô cũ thu lại cùng nhịp ô cũ co về rồi tắt; lỗ khoét luôn khít mép ô từng khung
+            float s0x = 1f / SCALE_X, s0y = 1f / SCALE_Y;
             next.animate().cancel();
             next.setImageBitmap(glowBitmaps.get(i));
-            if (cur != null && cur.getAlpha() > 0.05f) { next.setX(cur.getX()); next.setY(cur.getY()); }
-            else { next.setX(x); next.setY(y); }
-            next.setScaleX(1f); next.setScaleY(1f);   // không co giãn: lỗ khoét luôn khít mép ô
-            next.animate().x(x).y(y).alpha(GLOW_MOVING).setDuration(520)
+            next.setX(x); next.setY(y);
+            next.setScaleX(s0x); next.setScaleY(s0y);
+            next.animate().scaleX(1f).scaleY(1f).alpha(GLOW_MOVING).setDuration(500)
                     .setInterpolator(EASE)
                     .withEndAction(() -> startBreathing(next)).start();
             if (cur != null) {
                 cur.animate().cancel();
-                cur.animate().x(x).y(y).alpha(0f).setDuration(520).setInterpolator(EASE).start();
+                cur.animate().scaleX(s0x).scaleY(s0y).alpha(0f).setDuration(520).setInterpolator(EASE).start();
             }
             glowCur = nextIdx;
         });
@@ -1535,6 +1642,7 @@ public class MainActivity extends Activity {
     private void dimGlow(boolean dim) {
         if (glowCur < 0) return;
         if (breathe != null) { breathe.cancel(); breathe = null; }
+        if (glowFlash != null) { glowFlash.cancel(); glowFlash = null; }
         ImageView g = glowViews[glowCur];
         g.animate().cancel();
         g.animate().alpha(dim ? 0f : GLOW_MOVING).scaleX(1f).scaleY(1f).setDuration(360)
@@ -1673,7 +1781,18 @@ public class MainActivity extends Activity {
         // ảnh kênh che hình tới khi có khung đầu (ô trông không đổi gì), rồi mờ đi
         ImageView art = new ImageView(this);
         art.setScaleType(ImageView.ScaleType.FIT_XY);
-        art.setImageDrawable(thumbImage(t).getDrawable());
+        // bản sao riêng của ảnh ô: dùng chung một Drawable thì khung xem trước (to hơn ô) đặt lại cỡ vẽ của nó, tắt xem
+        // trước xong ô vẫn vẽ ảnh ở cỡ khung to: logo phóng to, lệch, cụt mép, mất góc bo (lỗi "ô bên cạnh bị lỗi")
+        // (ảnh ô là RoundImage tự vẽ, không nhân bản được: vẽ nó ra một ảnh riêng cỡ ô rồi trả lại cỡ vẽ cũ)
+        android.graphics.drawable.Drawable src = thumbImage(t).getDrawable();
+        if (src != null) {
+            android.graphics.Rect was = new android.graphics.Rect(src.getBounds());
+            Bitmap snap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            src.setBounds(0, 0, w, h);
+            src.draw(new Canvas(snap));
+            src.setBounds(was);
+            art.setImageBitmap(snap);
+        }
         box.addView(art, new FrameLayout.LayoutParams(-1, -1));
         thumbPrevArt = art;
         FrameLayout.LayoutParams lb = new FrameLayout.LayoutParams(sw, sh, Gravity.TOP | Gravity.START);
@@ -1696,7 +1815,13 @@ public class MainActivity extends Activity {
         thumbPrevBox = null;
         thumbPrevArt = null;
         if (box != null) root.removeView(box);
-        for (FrameLayout t : thumbs) t.getChildAt(0).setAlpha(1f);   // hiện lại mặt ô đã ẩn lúc xem trước
+        for (FrameLayout t : thumbs) {
+            t.getChildAt(0).setAlpha(1f);   // hiện lại mặt ô đã ẩn lúc xem trước
+            // đặt lại cỡ vẽ ảnh ô (phòng ảnh từng bị khung khác đổi cỡ): gán lại là ImageView tự căn lại theo ô
+            ImageView im = thumbImage(t);
+            android.graphics.drawable.Drawable d = im.getDrawable();
+            if (d != null) { im.setImageDrawable(null); im.setImageDrawable(d); }
+        }
     }
 
 
@@ -1791,6 +1916,28 @@ public class MainActivity extends Activity {
             openItem(i, v);
         });
         return t;
+    }
+
+    /** Ô banner đang chọn khi quay về màn hình chính: đặt về cỡ thường ngay, chờ màn hình hiện hẳn rồi phóng ra lại. */
+    private void replayThumb(View v) {
+        // ô bên cạnh: dựng lại lớp đệm (rời launcher rồi quay về, lớp đệm cũ có khi vẽ lệch: ảnh nằm chỗ cũ, khung
+        // đã dạt sang bên, logo bị cắt mép)
+        for (FrameLayout t : thumbs) {
+            if (t == v || t.getLayerType() != View.LAYER_TYPE_HARDWARE) continue;
+            t.setLayerType(View.LAYER_TYPE_NONE, null);
+            t.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+        }
+        v.animate().cancel();
+        v.setScaleX(1f); v.setScaleY(1f);
+        thumbGloss((FrameLayout) v).focus(false, 0, 1);
+        // chờ màn hình chính hiện hẳn và việc nền lúc quay về (đổ hàng, tải ảnh) lắng xuống rồi mới phóng: phóng trùng
+        // lúc máy đang bận thì khựng. Xem trước kênh (giải mã video, nặng) để sau khi phóng xong.
+        ui.postDelayed(() -> {
+            View.OnFocusChangeListener l = v.getOnFocusChangeListener();
+            if (!v.hasFocus() || l == null || !resumedNow) return;
+            l.onFocusChange(v, true);
+            if (thumbDwell != null) { ui.removeCallbacks(thumbDwell); ui.postDelayed(thumbDwell, THUMB_DWELL_MS + 500); }
+        }, 520);
     }
 
     private static ThumbGloss thumbGloss(FrameLayout t) {

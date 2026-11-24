@@ -28,6 +28,7 @@ public class HomeGuard extends AccessibilityService {
 
     @Override
     protected void onServiceConnected() {
+        Briefing.get(this);   // bản tin khi bật tivi: dịch vụ này sống suốt, giữ chỗ nghe tắt / bật màn hình
         launchers = otherLaunchers(this);
         if (!isSystemHome(this)) bringHome();   // vừa khởi động (hoặc vừa bật dịch vụ): vào Glass Home
     }

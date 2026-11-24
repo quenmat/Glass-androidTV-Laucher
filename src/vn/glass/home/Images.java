@@ -28,7 +28,7 @@ final class Images {
 
     private final Context ctx;
     // 2 luồng: đủ để tải trước mà không tranh CPU với hiệu ứng trên box yếu
-    private final ExecutorService io = Executors.newFixedThreadPool(2);
+    private final ExecutorService io = Executors.newFixedThreadPool(2, new LowPriority("glass-anh"));
     private final Handler ui = new Handler(Looper.getMainLooper());
     // ~32MB: nền giờ chỉ một ảnh mỗi lúc (khoảng 5MB) cộng ảnh phim của vài app; box chỉ có 2GB RAM
     private final LruCache<String, Bitmap> cache = new LruCache<String, Bitmap>(32 * 1024 * 1024) {

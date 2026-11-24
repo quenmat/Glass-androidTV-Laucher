@@ -19,8 +19,9 @@ function Run($exe, [string[]]$a) {
 
 $srcs = Get-ChildItem "$root\src" -Recurse -Filter *.java | ForEach-Object FullName
 Run javac (@("-encoding", "UTF-8", "--release", "11", "-classpath", $jar, "-d", "$b\classes") + $srcs)
-$classes = Get-ChildItem "$b\classes" -Recurse -Filter *.class | ForEach-Object FullName
-Run "$bt\d8.bat" (@("--release", "--lib", $jar, "--min-api", "31", "--output", "$b\dex") + $classes)
+# gom các .class vào một jar rồi đưa d8: truyền từng file thì dòng lệnh vượt giới hạn độ dài của Windows (cmd)
+Run jar @("cf", "$b\classes.jar", "-C", "$b\classes", ".")
+Run "$bt\d8.bat" @("--release", "--lib", $jar, "--min-api", "31", "--output", "$b\dex", "$b\classes.jar")
 
 Run "$bt\aapt2.exe" @("compile", "--dir", "$root\res", "-o", "$b\res.zip")
 Run "$bt\aapt2.exe" @("link", "-I", $jar, "--manifest", "$root\AndroidManifest.xml",

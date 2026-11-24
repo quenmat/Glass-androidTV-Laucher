@@ -224,7 +224,10 @@ final class FptFeed {
     private static final long FILM_EVERY = 12 * 3600_000L;
     private static long filmsAt;
     private static List<Shelf.Item> films = Collections.emptyList();
-    private static final Map<String, Film> filmInfo = new HashMap<>();   // đường dẫn phim -> thông tin (phim không đổi, nhớ luôn)
+    // đường dẫn phim -> thông tin (phim không đổi): nhớ tối đa 400 phim gần nhất, box chạy nhiều tuần không phình mãi
+    private static final Map<String, Film> filmInfo = new java.util.LinkedHashMap<String, Film>(64, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, Film> e) { return size() > 400; }
+    };
 
     private static final class Film { String path, art; int year; double score; boolean ok; }
 

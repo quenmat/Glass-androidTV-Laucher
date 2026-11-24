@@ -15,10 +15,13 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-// Ngày đáng nhớ trên bảng lịch: ngày lễ Việt Nam cài sẵn + ngày riêng của nhà (giỗ, sinh nhật...) đọc từ một Google
-// Sheet công khai. Đường dẫn sheet chỉ nằm trên box (files/lich/sheet.txt), không nằm trong mã. Sheet gồm các cột
-// Ngày (d/m, hoặc d/m/yyyy cho việc một lần), Loại ("âm" hoặc "dương", bỏ trống là dương), Tên, Ghi chú, Nhắc trước
-// (số ngày), Nhắc lại (cứ bao nhiêu ngày nhắc một lần); dòng tiêu đề và dòng sai dạng tự bỏ qua. Ngày âm đổi ra ngày dương theo từng năm (giỗ mỗi năm rơi một ngày khác). Bản đọc gần
+// Ngày đáng nhớ trên bảng lịch: ngày lễ Việt Nam cài sẵn + ngày riêng của nhà (giỗ, sinh nhật, mùng 1, rằm...) đọc từ
+// một Google Sheet công khai. Đường dẫn sheet chỉ nằm trên box (files/lich/sheet.txt), không nằm trong mã.
+// Sheet viết cho người không rành máy tính: cột nhận theo tên tiêu đề (đổi thứ tự cột không sao), gồm Ngày (số),
+// Tháng (số, hoặc chữ "Hằng tháng"), Lịch (Âm / Dương), Tên, Lời nhắc, Nhắc trước mấy ngày, Nhắc lại mấy ngày một lần,
+// Hiện ở màn hình khoá (Có / Không). Dòng không có ngày (tiêu đề, hướng dẫn, dòng trống) tự bỏ qua. Sheet kiểu cũ
+// (cột Ngày ghi "26/10", cột Loại) vẫn đọc được.
+// Nhắc trước 1 ngày thì chỉ nhắc hôm trước; nhắc trước từ 2 ngày trở lên thì nhắc cả đúng hôm đó. Ngày âm đổi ra ngày dương theo từng năm (giỗ mỗi năm rơi một ngày khác). Bản đọc gần
 // nhất cất trong prefs, 3 tiếng đọc lại một lần.
 final class Days {
     static final class Ev {
@@ -28,7 +31,8 @@ final class Days {
         int before, every;    // nhắc trước bao nhiêu ngày (0: không nhắc), cứ bao nhiêu ngày nhắc lại
         boolean lock;         // cột "Màn hình khoá" = Yes / Có: dòng báo xoay vòng trên màn hình khoá
         /** Bao nhiêu ngày trước thì dòng cuối bảng lịch / màn hình khoá bắt đầu báo. */
-        int window() { return mine ? Math.max(14, before) : 7; }
+        int window() { return !mine ? 7 : before > 0 ? before : 14; }
+        boolean monthly() { return m == 0; }   // Tháng = "Hằng tháng"
     }
 
     /** Một lần nhắc: sự kiện, còn bao nhiêu ngày, ngày dương rơi vào (khoá để biết đã nhắc chưa). */
@@ -73,9 +77,9 @@ final class Days {
                 boolean hit;
                 if (e.lunar) {
                     if (l == null) l = Lunar.fromSolar(dd, mm, yy);
-                    hit = l[3] == 0 && l[1] == e.m && (l[0] == e.d || (e.d == 30 && l[0] == 29 && lastOfMonth(dd, mm, yy)));
+                    hit = (e.monthly() || (l[3] == 0 && l[1] == e.m)) && (l[0] == e.d || (e.d == 30 && l[0] == 29 && lastOfMonth(dd, mm, yy)));
                 } else {
-                    hit = e.d == dd && e.m == mm;
+                    hit = e.d == dd && (e.monthly() || e.m == mm);
                 }
                 if (hit) out.add(e);
             }
@@ -116,39 +120,12 @@ final class Days {
      * theo ngày sự kiện + mốc nhắc) chỉ hiện một lần; shown là các khoá đã hiện. Riêng đúng ngày nhắc thì mỗi lần bật
      * tivi (wake) đều nhắc lại. Không có thì null.
      */
-    static Due reminder(Context c, java.util.Set<String> shown, boolean wake) {
-        Due u = next(c, shown, wake, false);
-        return u != null ? u : incense(shown, wake);
-    }
-
-    /**
-     * Trước mùng 1, rằm (15 âm lịch) và ông Công ông Táo (23 tháng Chạp) đúng một ngày: "Mai mùng 1 tháng Mười Một,
-     * nhớ chuẩn bị đồ thắp hương". Cùng
-     * nhịp với ngày nhắc của nhà: hôm đó mỗi lần bật tivi nhắc một lần (ngày của nhà đến hạn thì nhường ngày của nhà).
-     */
-    private static Due incense(java.util.Set<String> shown, boolean wake) {
-        Calendar t = Calendar.getInstance();
-        t.add(Calendar.DAY_OF_MONTH, 1);
-        int dd = t.get(Calendar.DAY_OF_MONTH), mm = t.get(Calendar.MONTH) + 1, yy = t.get(Calendar.YEAR);
-        int[] l = Lunar.fromSolar(dd, mm, yy);
-        boolean tao = l[0] == 23 && l[1] == 12 && l[3] == 0;
-        if (l[0] != 1 && l[0] != 15 && !tao) return null;
-        Due u = new Due();
-        Ev e = new Ev();
-        e.d = l[0]; e.m = l[1]; e.lunar = true; e.name = tao ? "Ông Công ông Táo" : l[0] == 1 ? "Mùng 1" : "Rằm"; e.note = "";
-        u.e = e; u.days = 1; u.dd = dd; u.mm = mm; u.yy = yy;
-        u.key = "huong@" + dd + "/" + mm + "/" + yy;
-        if (shown.contains(u.key) && !wake) return null;
-        String what = tao ? "ông Công ông Táo"
-                : l[0] == 1 && l[1] == 1 && l[3] == 0 ? "mùng 1 Tết"
-                : (l[0] == 1 ? "mùng 1" : "rằm") + " tháng " + Lunar.monthName(l[1], l[3] == 1);
-        u.text = "Mai " + what + ", nhớ chuẩn bị đồ thắp hương";
-        return u;
-    }
+    static Due reminder(Context c, java.util.Set<String> shown, boolean wake) { return next(c, shown, wake, false); }
 
     /** Mốc nhắc gần nhất đã tới khi còn n ngày (số ngày trước sự kiện của mốc đó), chưa tới mốc nào thì -1. */
     private static int slot(Ev e, int n) {
-        if (n <= 1) return n;
+        if (n == 1) return 1;
+        if (n == 0) return e.before >= 2 ? 0 : -1;
         int best = -1;
         for (int s = e.before; s > 1; s -= e.every > 0 ? e.every : e.before) if (s >= n) best = s;
         return best >= 0 ? best : (n <= 1 ? n : -1);
@@ -173,7 +150,12 @@ final class Days {
                 u.key = e.name + "@" + dd + "/" + mm + "/" + yy + "#" + (dueOnly ? slot(e, n) : n);
                 int sl = dueOnly ? slot(e, n) : n;
                 if (dueOnly && (sl < 0 || (shown.contains(u.key) && !(wake && sl == n)))) continue;
-                String what = e.name + (e.note.isEmpty() ? "" : ", " + lower(e.note));
+                String nm = e.name;
+                if (e.monthly() && e.lunar) {   // "Mùng 1" -> "Mùng 1 tháng Mười Một" (mùng 1 tháng Giêng là Tết)
+                    int[] l = Lunar.fromSolar(dd, mm, yy);
+                    nm += l[1] == 1 && e.d == 1 && l[3] == 0 ? " Tết" : " tháng " + Lunar.monthName(l[1], l[3] == 1);
+                }
+                String what = nm + (e.note.isEmpty() ? "" : ", " + lower(e.note));
                 u.text = n == 0 ? "Hôm nay là " + what : n == 1 ? "Mai là " + what : "Còn " + n + " ngày nữa là " + what;
                 return u;
             }
@@ -241,26 +223,68 @@ final class Days {
 
     private static final Pattern DATE = Pattern.compile("^\\s*'?(\\d{1,2})\\s*[/.-]\\s*(\\d{1,2})(?:\\s*[/.-]\\s*(\\d{4}))?\\s*$");
 
+    private static String low(String s) { return s == null ? "" : s.trim().toLowerCase(new java.util.Locale("vi")); }
+
+    /** Vị trí các cột theo tên tiêu đề; chưa thấy tiêu đề thì theo thứ tự kiểu cũ. */
+    private static final class Cols {
+        int day = 0, month = -1, kind = 1, name = 2, note = 3, before = 4, every = 5, lock = 6;
+        boolean read(List<String> f) {
+            int d = -1, mo = -1, k = -1, n = -1, no = -1, b = -1, e = -1, l = -1;
+            for (int i = 0; i < f.size(); i++) {
+                String h = low(f.get(i));
+                if (h.contains("nhắc trước") || h.contains("nhac truoc")) b = i;
+                else if (h.contains("nhắc lại") || h.contains("nhac lai")) e = i;
+                else if (h.contains("khoá") || h.contains("khóa") || h.contains("khoa")) l = i;
+                else if (h.contains("lời nhắc") || h.contains("ghi chú")) no = i;
+                else if (h.startsWith("tháng")) mo = i;
+                else if (h.startsWith("ngày")) d = i;
+                else if (h.startsWith("lịch") || h.startsWith("loại") || h.contains("âm")) k = i;
+                else if (h.startsWith("tên")) n = i;
+            }
+            if (d < 0 || n < 0) return false;
+            day = d; month = mo; kind = k; name = n; note = no; before = b; every = e; lock = l;
+            return true;
+        }
+    }
+
+    private static String at(List<String> f, int i) { return i >= 0 && i < f.size() ? f.get(i).trim() : ""; }
+
+    private static final Pattern DAY_ONLY = Pattern.compile("^\\s*'?(\\d{1,2})\\s*$");
+
     static List<Ev> parse(String csv) {
         List<Ev> out = new ArrayList<>();
         if (csv == null || csv.isEmpty()) return out;
+        Cols col = new Cols();
         for (String line : csv.split("\r?\n")) {
             List<String> f = cells(line);
             if (f.size() < 3) continue;
-            Matcher m = DATE.matcher(f.get(0));
-            if (!m.find()) continue;   // dòng tiêu đề, dòng trống
+            String dayCell = at(f, col.day);
+            Matcher full = DATE.matcher(dayCell), only = DAY_ONLY.matcher(dayCell);
             Ev e = new Ev();
-            e.d = Integer.parseInt(m.group(1)); e.m = Integer.parseInt(m.group(2));
-            e.y = m.group(3) == null ? 0 : Integer.parseInt(m.group(3));
-            if (e.d < 1 || e.d > 31 || e.m < 1 || e.m > 12) continue;
-            String kind = f.get(1).trim().toLowerCase(new java.util.Locale("vi"));
+            if (col.month >= 0 && only.find()) {
+                // kiểu mới: Ngày là số, Tháng là số hoặc "Hằng tháng"
+                e.d = Integer.parseInt(only.group(1));
+                String mo = low(at(f, col.month));
+                if (mo.contains("hằng") || mo.contains("hàng") || mo.contains("mọi") || mo.contains("hang") || mo.equals("*")) e.m = 0;
+                else { e.m = num(mo); if (e.m < 1 || e.m > 12) continue; }
+            } else if (full.find()) {
+                // kiểu cũ: "26/10" hoặc "26/10/2027" (việc một lần)
+                e.d = Integer.parseInt(full.group(1)); e.m = Integer.parseInt(full.group(2));
+                e.y = full.group(3) == null ? 0 : Integer.parseInt(full.group(3));
+                if (e.m < 1 || e.m > 12) continue;
+            } else {
+                if (col.read(f)) continue;   // dòng tiêu đề: nhớ vị trí cột
+                continue;                    // dòng hướng dẫn, dòng trống
+            }
+            if (e.d < 1 || e.d > 31) continue;
+            String kind = low(at(f, col.kind));
             e.lunar = kind.startsWith("âm") || kind.startsWith("am") || kind.equals("al");
-            e.name = f.get(2).trim();
+            e.name = at(f, col.name);
             if (e.name.isEmpty()) continue;
-            e.note = f.size() > 3 ? f.get(3).trim() : "";
-            e.before = f.size() > 4 ? num(f.get(4)) : 0;
-            e.every = f.size() > 5 ? num(f.get(5)) : 0;
-            String lk = f.size() > 6 ? f.get(6).trim().toLowerCase(new java.util.Locale("vi")) : "";
+            e.note = at(f, col.note);
+            e.before = num(at(f, col.before));
+            e.every = num(at(f, col.every));
+            String lk = low(at(f, col.lock));
             e.lock = lk.startsWith("y") || lk.startsWith("có") || lk.startsWith("co") || lk.equals("x") || lk.equals("true");
             e.mine = true;
             out.add(e);

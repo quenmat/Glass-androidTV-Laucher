@@ -51,7 +51,15 @@ final class GearIcon extends Drawable {
         // lỗ lớn giữa (thành bánh răng "nét")
         body.addCircle(cx, cy, s * 0.29f, Path.Direction.CCW);
         body.setFillType(Path.FillType.EVEN_ODD);
-        fill.setPathEffect(new CornerPathEffect(s * 0.035f));
+        // bo góc răng một lần ở đây (áp CornerPathEffect ra hình mới) thay vì để bút vẽ áp lại ở mỗi khung: lần đầu
+        // nút hiện ra không phải dựng hiệu ứng nét, hiệu ứng nở nút mượt ngay từ lần chọn đầu tiên
+        Paint round = new Paint(Paint.ANTI_ALIAS_FLAG);
+        round.setStyle(Paint.Style.FILL);
+        round.setPathEffect(new CornerPathEffect(s * 0.035f));
+        Path baked = new Path();
+        round.getFillPath(body, baked);
+        baked.setFillType(Path.FillType.EVEN_ODD);
+        body.set(baked);
         ring.setStrokeWidth(s * 0.06f);
     }
 

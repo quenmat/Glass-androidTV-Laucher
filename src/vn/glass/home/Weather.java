@@ -18,6 +18,8 @@ import java.net.URL;
 final class Weather {
     static final class Now {
         int temp, hi, lo, rain, hum, code, aqi = -1, pm25 = -1;
+        int feels, wind, gust, rainSoon;   // cảm giác như (°C), gió / gió giật (km/h), khả năng mưa cao nhất 3 giờ tới (%)
+        float precip;                      // lượng mưa giờ hiện tại (mm)
         String aqiSrc = "";   // giờ đo ở trạm WAQI ("" khi là số ước tính Open-Meteo)
         boolean day = true;
         String rise = "", set = "";
@@ -27,7 +29,8 @@ final class Weather {
 
     private static final String LAT = "21.0285", LON = "105.8542";
     private static final String WX = "https://api.open-meteo.com/v1/forecast?latitude=" + LAT + "&longitude=" + LON
-            + "&current=temperature_2m,relative_humidity_2m,weather_code,is_day"
+            + "&current=temperature_2m,relative_humidity_2m,weather_code,is_day,apparent_temperature,wind_speed_10m,wind_gusts_10m,precipitation"
+            + "&hourly=precipitation_probability&forecast_hours=4"
             + "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset"
             + "&timezone=Asia%2FBangkok&forecast_days=1";
     private static final String AQ = "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=" + LAT
@@ -43,6 +46,15 @@ final class Weather {
         return cur;
     }
 
+    /** Số thời tiết đã cũ hơn maxAgeMs (hoặc chưa có): bản tin sáng cần số mới, đọc lại trước khi hiện. */
+    static boolean olderThan(Context c, long maxAgeMs) {
+        Now n = cached(c);
+        return n == null || System.currentTimeMillis() - n.wxAt > maxAgeMs;
+    }
+
+    /** Đọc lại ngay cả phần chưa tới hạn (bản tin sáng): coi như số cũ đã hết hạn. */
+    static Now refreshNow(Context c) { return refresh(c, true); }
+
     static boolean stale(Context c) {
         Now n = cached(c);
         long now = System.currentTimeMillis();
@@ -50,13 +62,16 @@ final class Weather {
     }
 
     /** Đọc lại phần đã cũ (chạy ở luồng nền); trả về số mới nhất, lỗi thì giữ số cũ. */
-    static Now refresh(Context c) {
+    static Now refresh(Context c) { return refresh(c, false); }
+
+    /** force: bản tin sáng, thời tiết cũ hơn 10 phút hay AQI cũ hơn 20 phút cũng đọc lại. */
+    private static Now refresh(Context c, boolean force) {
         Now old = cached(c);
         Now n = new Now();
         if (old != null) copy(old, n);
         long now = System.currentTimeMillis();
         boolean changed = false;
-        if (old == null || now - old.wxAt > WX_EVERY) {
+        if (old == null || now - old.wxAt > (force ? 10 * 60_000L : WX_EVERY)) {
             try {
                 JSONObject o = new JSONObject(get(WX));
                 JSONObject k = o.getJSONObject("current"), d = o.getJSONObject("daily");
@@ -64,6 +79,13 @@ final class Weather {
                 n.hum = k.optInt("relative_humidity_2m", 0);
                 n.code = k.optInt("weather_code", 0);
                 n.day = k.optInt("is_day", 1) == 1;
+                n.feels = (int) Math.round(k.optDouble("apparent_temperature", k.getDouble("temperature_2m")));
+                n.wind = (int) Math.round(k.optDouble("wind_speed_10m", 0));
+                n.gust = (int) Math.round(k.optDouble("wind_gusts_10m", 0));
+                n.precip = (float) k.optDouble("precipitation", 0);
+                n.rainSoon = 0;
+                org.json.JSONArray pp = o.optJSONObject("hourly") == null ? null : o.getJSONObject("hourly").optJSONArray("precipitation_probability");
+                for (int i = 0; pp != null && i < Math.min(4, pp.length()); i++) n.rainSoon = Math.max(n.rainSoon, pp.optInt(i, 0));
                 n.hi = (int) Math.round(d.getJSONArray("temperature_2m_max").getDouble(0));
                 n.lo = (int) Math.round(d.getJSONArray("temperature_2m_min").getDouble(0));
                 n.rain = d.getJSONArray("precipitation_probability_max").optInt(0, 0);
@@ -73,7 +95,7 @@ final class Weather {
                 changed = true;
             } catch (Exception e) { android.util.Log.i("GlassWx", "thoi tiet loi " + e); }
         }
-        if (old == null || aqiDue(c, old, now)) {
+        if (old == null || aqiDue(c, old, now) || (force && now - old.aqiAt > 20 * 60_000L)) {
             String token = token(c);
             if (token != null) try {
                 JSONObject o = new JSONObject(get(WAQI + java.net.URLEncoder.encode(token, "UTF-8")));
@@ -165,6 +187,7 @@ final class Weather {
         b.temp = a.temp; b.hi = a.hi; b.lo = a.lo; b.rain = a.rain; b.hum = a.hum; b.code = a.code; b.day = a.day;
         b.rise = a.rise; b.set = a.set; b.wxAt = a.wxAt; b.aqi = a.aqi; b.pm25 = a.pm25; b.aqiAt = a.aqiAt;
         b.aqiSrc = a.aqiSrc;
+        b.feels = a.feels; b.wind = a.wind; b.gust = a.gust; b.precip = a.precip; b.rainSoon = a.rainSoon;
     }
 
     private static SharedPreferences prefs(Context c) { return c.getSharedPreferences("glass", Context.MODE_PRIVATE); }
@@ -174,7 +197,8 @@ final class Weather {
             JSONObject o = new JSONObject();
             o.put("t", n.temp).put("hi", n.hi).put("lo", n.lo).put("r", n.rain).put("h", n.hum).put("c", n.code)
                     .put("d", n.day).put("sr", n.rise).put("ss", n.set).put("wa", n.wxAt)
-                    .put("q", n.aqi).put("pm", n.pm25).put("qa", n.aqiAt).put("qs", n.aqiSrc);
+                    .put("q", n.aqi).put("pm", n.pm25).put("qa", n.aqiAt).put("qs", n.aqiSrc)
+                    .put("fl", n.feels).put("wi", n.wind).put("gu", n.gust).put("pr", n.precip).put("rs", n.rainSoon);
             p.edit().putString("weather", o.toString()).apply();
         } catch (Exception ignored) {}
     }
@@ -190,6 +214,9 @@ final class Weather {
             n.rise = o.optString("sr", ""); n.set = o.optString("ss", ""); n.wxAt = o.optLong("wa");
             n.aqi = o.optInt("q", -1); n.pm25 = o.optInt("pm", -1); n.aqiAt = o.optLong("qa");
             n.aqiSrc = o.optString("qs", "");
+            n.feels = o.optInt("fl", n.temp); n.wind = o.optInt("wi"); n.gust = o.optInt("gu");
+            n.precip = (float) o.optDouble("pr", 0); n.rainSoon = o.optInt("rs");
+            if (!o.has("wi")) n.wxAt = 0;   // lưu từ bản cũ (chưa có gió, cảm giác như): coi như hết hạn, đọc lại
             return n;
         } catch (Exception e) { return null; }
     }

@@ -13,6 +13,8 @@
     <uses-permission android:name="android.permission.READ_TV_LISTINGS" />
     <uses-permission android:name="com.android.providers.tv.permission.READ_EPG_DATA" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- bản tin sáng: lấy sẵn số thời tiết đúng 6:40 (hẹn giờ chính xác, đánh thức box) -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <!-- địa chỉ của tivi trong mạng nhà: hiện mã QR để điện thoại gửi ảnh lên -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- xem trước kênh IPTV trong bảng kênh: Wi-Fi mặc định lọc gói multicast, phải giữ khoá lúc đang nhận -->
@@ -79,5 +81,7 @@
             </intent-filter>
             <meta-data android:name="android.accessibilityservice" android:resource="@xml/home_guard" />
         </service>
+        <!-- lấy sẵn thời tiết + AQI lúc 6:40 ngày thường cho bản tin sáng (hẹn giờ trong app, không nhận từ ngoài) -->
+        <receiver android:name=".MorningAlarm" android:exported="false" />
     </application>
 </manifest>
