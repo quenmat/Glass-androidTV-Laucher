@@ -4011,24 +4011,53 @@ public class MainActivity extends Activity {
             img.animate().scaleX(s).scaleY(s).translationZ(has ? px(30) : 0).setInterpolator(in).setDuration(has ? 500 : 520).start();
             sheen.animate().scaleX(s).scaleY(s).translationZ(has ? px(31) : 0).alpha(has ? 1f : 0f)
                     .setInterpolator(in).setDuration(has ? 500 : 480).start();
+            // quầng bám theo ô y như dock (moveGlow): nở từ cỡ ô thường lên cỡ ô đang chọn cùng tâm, cùng đường cong,
+            // cùng 500 ms; bỏ chọn thì thu lại cùng nhịp ô co về rồi tắt. Lỗ khoét luôn khít mép ô từng khung.
+            if (breathe != null && (has || g.getAlpha() > 0f)) { breathe.cancel(); breathe = null; }
             if (has) {
-                g.animate().alpha(GLOW_MOVING).setDuration(520).setInterpolator(EASE).withEndAction(() -> startBreathing(g)).start();
+                if (g.getAlpha() == 0f) { g.setScaleX(1f / sc); g.setScaleY(1f / sc); }   // đang hiện sẵn (ảnh vừa tới) thì khỏi nở lại
+                g.animate().scaleX(1f).scaleY(1f).alpha(GLOW_MOVING).setDuration(500).setInterpolator(EASE)
+                        .withEndAction(() -> startBreathing(g)).start();
                 onFocus.run();
             } else {
-                if (breathe != null) { breathe.cancel(); breathe = null; }
-                g.animate().alpha(0f).setDuration(300).setInterpolator(EASE).start();
+                g.animate().scaleX(1f / sc).scaleY(1f / sc).alpha(0f).setDuration(520).setInterpolator(EASE).start();
             }
         });
+        // lún khi nhấn, bật lại + quầng loé khi thả, như ô dock (press / release / flashGlow)
+        float down = 1f + (sc - 1f) * 0.44f;   // dock lún từ 116% về 107%: cùng tỉ lệ cho ô 110%
         t.setOnKeyListener((v, kc, ev) -> {
-            if (isOk(kc) && ev.getAction() == KeyEvent.ACTION_DOWN && ev.getRepeatCount() == 0) press(img, sheen);
-            // nhả OK: bật lại đúng cỡ đang chọn (110%). Không bật lại thì ô kẹt ở cỡ lún 107% trong khi quầng sáng dựng cho
-            // 110%, lộ khe tối thành viền đen quanh ô (rõ nhất khi bấm Back từ trình phát về)
-            if (isOk(kc) && ev.getAction() == KeyEvent.ACTION_UP) {
+            if (!isOk(kc)) return false;
+            if (ev.getAction() == KeyEvent.ACTION_DOWN && ev.getRepeatCount() == 0) {
+                for (View x : new View[]{img, sheen}) {
+                    x.animate().cancel();
+                    x.animate().scaleX(down).scaleY(down).translationZ(px(10)).setInterpolator(EASE).setDuration(150).start();
+                }
+                if (breathe != null) { breathe.cancel(); breathe = null; }
+                g.animate().cancel();
+                g.animate().scaleX(down / sc).scaleY(down / sc).setInterpolator(EASE).setDuration(150).start();
+            }
+            // nhả OK: bật lại đúng cỡ đang chọn. Không bật lại thì ô kẹt ở cỡ lún trong khi quầng dựng cho cỡ chọn,
+            // lộ khe tối thành viền đen quanh ô (rõ nhất khi bấm Back từ trình phát về)
+            if (ev.getAction() == KeyEvent.ACTION_UP) {
                 for (View x : new View[]{img, sheen}) {
                     x.animate().cancel();
                     x.animate().scaleX(sc).scaleY(sc).translationZ(px(x == img ? 30 : 31))
                             .setInterpolator(EASE).setDuration(420).start();
                 }
+                g.animate().cancel();
+                g.animate().scaleX(1f).scaleY(1f).setInterpolator(EASE).setDuration(420).start();
+                ObjectAnimator up = ObjectAnimator.ofFloat(g, View.ALPHA, g.getAlpha(), 1f);
+                up.setDuration(200); up.setInterpolator(EASE);
+                ObjectAnimator dim = ObjectAnimator.ofFloat(g, View.ALPHA, 1f, GLOW_MOVING);
+                dim.setDuration(600); dim.setInterpolator(EASE);
+                AnimatorSet flash = new AnimatorSet();
+                flash.playSequentially(up, dim);
+                flash.addListener(new android.animation.AnimatorListenerAdapter() {
+                    boolean cut;
+                    @Override public void onAnimationCancel(android.animation.Animator a) { cut = true; }
+                    @Override public void onAnimationEnd(android.animation.Animator a) { if (!cut && t.hasFocus() && breathe == null) startBreathing(g); }
+                });
+                flash.start();
             }
             return false;
         });
