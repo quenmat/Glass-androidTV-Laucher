@@ -47,7 +47,16 @@ final class FptFeed {
         }
     }
 
-    private static final class M { String ev, home, away, homeCode, awayCode, round, slug; long at, dur; boolean live, fav; }
+    private static final class M { String ev, home, away, homeCode, awayCode, round, slug; long at, dur, day; boolean live, fav, epl; }
+
+    private static final java.util.TimeZone UK = java.util.TimeZone.getTimeZone("Europe/London");
+
+    /** Ngày thi đấu theo giờ Anh (tự theo giờ mùa hè / mùa đông), dạng năm * 1000 + ngày trong năm. */
+    private static long ukDay(long at) {
+        java.util.Calendar c = java.util.Calendar.getInstance(UK);
+        c.setTimeInMillis(at);
+        return c.get(java.util.Calendar.YEAR) * 1000L + c.get(java.util.Calendar.DAY_OF_YEAR);
+    }
 
     /** Tải lại (luồng nền). favAbbr: mã 3 chữ của đội yêu thích (vd MUN), có thể null. Trả true khi hàng đổi. */
     static boolean refresh(String favAbbr, int row) {
@@ -154,6 +163,10 @@ final class FptFeed {
             for (M m : ms) if (m.at < first) { first = m.at; cur = m.round; }
             if (cur != null) { String c = cur; ms.removeIf(m -> !c.equals(m.round)); }
             int epl = ms.size();
+            // ngày thi đấu theo giờ Anh: trận 3 giờ sáng giờ Việt Nam là 20:00 tối hôm trước bên Anh, cùng ngày với các
+            // trận chiều hôm đó; người xem theo dõi vòng đấu theo từng ngày thi đấu như vậy
+            long firstDay = Long.MAX_VALUE;
+            for (M m : ms) { m.epl = true; m.day = ukDay(m.at); firstDay = Math.min(firstDay, m.day); }
             // giải khác: đang diễn ra hoặc sắp đá trong OTHER_SOON (trạng thái tính lại theo giờ hiện tại)
             for (M m : others(favAbbr, now)) {
                 listed.add(m.ev);
@@ -161,15 +174,23 @@ final class FptFeed {
                 m.live = now >= m.at;
                 ms.add(m);
             }
+            // thứ tự: (1) mọi trận đang trực tiếp, (2) trận Ngoại hạng Anh còn lại của ngày thi đấu gần nhất, (3) trận giải
+            // khác sắp đá, (4) trận Ngoại hạng Anh các ngày sau của vòng; trong mỗi nhóm theo giờ đá, đội yêu thích trước
+            final long fd = firstDay;
+            java.util.function.ToIntFunction<M> group = m -> m.live ? 0 : m.epl ? (m.day == fd ? 1 : 3) : 2;
             ms.sort((x, y) -> {
-                if (x.live != y.live) return x.live ? -1 : 1;
+                int gx = group.applyAsInt(x), gy = group.applyAsInt(y);
+                if (gx != gy) return Integer.compare(gx, gy);
                 if (x.at != y.at) return Long.compare(x.at, y.at);
                 return Boolean.compare(y.fav, x.fav);
             });
             List<Shelf.Item> out = new ArrayList<>();
             Map<String, String> keep = new HashMap<>();
             java.util.Set<String> arts = new java.util.HashSet<>();
+            int eplLeft = epl;   // cả vòng Ngoại hạng Anh luôn hiện đủ: giải khác chỉ chen vào chỗ còn lại
             for (M m : ms) {
+                if (m.epl) eplLeft--;
+                else if (out.size() >= row - eplLeft) continue;
                 if (out.size() >= row) break;
                 String poster;
                 synchronized (posters) { poster = posters.get(m.ev); }
@@ -312,7 +333,7 @@ final class FptFeed {
         try {
             JSONObject pp = nextData(get(SITE + "/su-kien/" + ev)).getJSONObject("props").getJSONObject("pageProps");
             String u = pp.optString("ssrPosterUrl", null);
-            if (u == null) return null;
+            if (u == null || !u.startsWith("http")) return null;   // trận chưa có banner: trang trả chuỗi rỗng / null, đừng thành ô đen
             return u.replace("fmt=webp", "fmt=jpg");
         } catch (Exception e) {
             android.util.Log.i(TAG, "banner loi " + e);

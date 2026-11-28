@@ -28,9 +28,10 @@ import java.util.Set;
 import java.util.TimeZone;
 
 // Hàng TV360: trận Cúp C1 (UEFA Champions League) đang đá hoặc sắp tới giờ đá đứng đầu, rồi mọi chương trình đang phát
-// trực tiếp, cuối cùng là các trận C1 còn lại của lượt hiện tại. Dữ liệu lấy từ hai mục công khai của tv360.vn: lịch C1 (sports/get-match-box) và
-// mục "Trực tiếp" của trang chủ. Bấm ô là mở thẳng kênh đang phát trận trong app TV360 (trang trực tiếp, theo mã
-// kênh, đúng như nút "Xem ngay" của lịch C1 trong app).
+// trực tiếp, các chương trình sắp phát trong 4 giờ tới, rồi các trận C1 còn lại của lượt hiện tại; chưa đủ 5 ô thì lấp
+// bằng phim nổi bật của trang Phim. Dữ liệu lấy từ các mục công khai của tv360.vn: lịch C1 (sports/get-match-box),
+// mục "Trực tiếp" của trang chủ và trang Phim (composite/film/get-home). Bấm ô trận / chương trình là mở thẳng kênh
+// trong app TV360 (trang trực tiếp, theo mã kênh, đúng như nút "Xem ngay" của lịch C1 trong app); ô phim mở trang phim.
 // Hàng chỉ bật khi trang trực tiếp của app nhận lệnh mở từ Glass Home; không thì app TV360 giữ hàng như cũ.
 final class Tv360Feed {
     static final String PKG = "com.viettel.tv360.tv";
@@ -38,8 +39,17 @@ final class Tv360Feed {
     private static final String SITE = "https://tv360.vn/public/v1/";
     private static final String TAG = "GlassTv360";
     private static final long MATCH_MS = 2 * 3600_000L + 15 * 60_000L;
-    private static final long SOON_MS = 60 * 60_000L;   // trận C1 còn dưới chừng này là tới giờ đá: lên trước các chương trình đang phát
+    /**
+     * Đêm đấu của một trận: ngày theo giờ Việt Nam lùi 12 tiếng. Trận 23:45 tối thứ Ba, 0:45 và 3:00 sáng thứ Tư cùng
+     * thuộc đêm thứ Ba, đúng một đêm đấu bên châu Âu; người xem quan tâm theo đêm đấu, không theo ngày lịch.
+     */
+    private static long night(long at) { return Math.floorDiv(at + 7 * 3600_000L - 12 * 3600_000L, 86_400_000L); }
     private static final TimeZone VN = TimeZone.getTimeZone("Asia/Ho_Chi_Minh");
+    private static final long UPCOMING_MS = 4 * 3600_000L;   // chương trình sắp phát trong chừng này thì lên hàng
+    private static final int MIN_ROW = 5;                    // ít hơn chừng này ô trận / chương trình thì lấp bằng phim
+    private static final long FILM_EVERY = 12 * 3600_000L;
+    private static long filmsAt;
+    private static List<Shelf.Item> films = Collections.emptyList();
 
     private static volatile List<Shelf.Item> items = Collections.emptyList();
     private static String lastSig = "";
@@ -104,12 +114,16 @@ final class Tv360Feed {
                 return Boolean.compare(y.fav, x.fav);
             });
 
-            // thứ tự hàng: (1) trận C1 đang đá hoặc sắp đá trong SOON_MS, (2) mọi chương trình trực tiếp đang diễn ra
-            // (mới bắt đầu trước), (3) các trận C1 còn lại của lượt (còn xa giờ đá)
-            List<M> hot = new ArrayList<>(), later = new ArrayList<>();
-            for (M m : ms) (m.live || m.at - now <= SOON_MS ? hot : later).add(m);
+            // thứ tự hàng: cái gì đang trực tiếp luôn đứng đầu: (1) trận C1 đang đá, (2) mọi chương trình trực tiếp khác
+            // (mới bắt đầu trước), rồi (3) mọi trận còn lại của đêm đấu gần nhất (cả trận sớm lẫn trận 3 giờ sáng),
+            // (3b) chương trình sắp phát, (4) các trận C1 của đêm đấu sau trong cùng lượt. Trận C1 luôn hiện đủ cả lượt:
+            // chương trình khác chỉ chen vào chỗ còn lại sau khi đã chừa chỗ cho mọi trận C1
+            long firstNight = Long.MAX_VALUE;
+            for (M m : ms) firstNight = Math.min(firstNight, night(m.at));
+            List<M> hot = new ArrayList<>(), next = new ArrayList<>(), later = new ArrayList<>();
+            for (M m : ms) (m.live ? hot : night(m.at) == firstNight ? next : later).add(m);
             Set<String> usedChannels = new HashSet<>();
-            for (M m : hot) if (m.live) usedChannels.add(m.channel);   // kênh đang đá C1: khỏi hiện thêm ô "đang phát" trùng
+            for (M m : hot) usedChannels.add(m.channel);   // kênh đang đá C1: khỏi hiện thêm ô "đang phát" trùng
             List<JSONObject> live = new ArrayList<>();
             for (JSONObject e : events) {
                 long bt = e.optLong("epochBt", 0), et = e.optLong("epochEt", 0);
@@ -123,15 +137,39 @@ final class Tv360Feed {
             File dir = new File(ctx.getCacheDir(), "tv360");
             for (M m : hot) addMatch(ctx, m, dir, keep, out, row);
             for (JSONObject e : live) {
-                if (out.size() >= row) break;
+                if (out.size() >= row - next.size() - later.size()) break;   // chừa chỗ cho mọi trận C1 còn lại: lịch luôn đủ
                 if (!usedChannels.add(e.optString("itemId"))) continue;
                 out.add(item(e.optString("itemId"), big(e.optString("coverImage")), true, e.optLong("epochBt"), e.optLong("epochEt")));
             }
+            for (M m : next) addMatch(ctx, m, dir, keep, out, row);
+            // (3b) chương trình sắp phát trong UPCOMING_MS (sớm trước): tới giờ thì ô tự thành "trực tiếp", không đợi lượt tải;
+            // mỗi kênh một ô (khung giờ sớm nhất), kênh đã có ô đang phát thì thôi
+            List<JSONObject> soon = new ArrayList<>();
+            for (JSONObject e : events) {
+                long bt = e.optLong("epochBt", 0);
+                String ch = e.optString("itemId", "");
+                if (bt <= now || bt - now > UPCOMING_MS || !ch.matches("\\d+") || !e.optString("coverImage", "").startsWith("http")) continue;
+                boolean c1 = false;   // chính là một trận C1 đã có ô riêng: bỏ
+                for (M m : ms) if (m.channel.equals(ch) && Math.abs(m.at - bt) < 30 * 60_000L) { c1 = true; break; }
+                if (!c1) soon.add(e);
+            }
+            soon.sort((x, y) -> Long.compare(x.optLong("epochBt"), y.optLong("epochBt")));
+            for (JSONObject e : soon) {
+                if (out.size() >= row - later.size()) break;
+                if (!usedChannels.add(e.optString("itemId"))) continue;
+                out.add(item(e.optString("itemId"), big(e.optString("coverImage")), false, e.optLong("epochBt"), e.optLong("epochEt")));
+            }
             for (M m : later) addMatch(ctx, m, dir, keep, out, row);
+            // (4) vẫn dưới MIN_ROW ô (sáng sớm, ngày vắng): lấp bằng phim nổi bật của trang Phim
+            int nLive = out.size();
+            for (Shelf.Item f : films()) {
+                if (out.size() >= Math.min(row, Math.max(MIN_ROW, nLive))) break;
+                out.add(f);
+            }
             // ô tự vẽ của trận đã xong: xoá
             File[] old = dir.listFiles();
             if (old != null) for (File f : old) if (!keep.contains(f.getName())) f.delete();
-            android.util.Log.i(TAG, "c1=" + ms.size() + " dangphat=" + live.size() + " o=" + out.size());
+            android.util.Log.i(TAG, "c1=" + ms.size() + " dangphat=" + live.size() + " sap=" + soon.size() + " phim=" + (out.size() - nLive) + " o=" + out.size());
             return set(out);
         } catch (Exception e) {
             android.util.Log.i(TAG, "loi " + e);   // mất mạng, trang đổi cấu trúc: giữ hàng cũ
@@ -166,6 +204,46 @@ final class Tv360Feed {
         it.intent = "intent:#Intent;component=" + PKG + "/" + LIVE_SCREEN
                 + ";S.SCREEN_TYPE=LIVE_DETAIL;S.ITEM_ID=" + channel + ";end";
         return it;
+    }
+
+    /**
+     * Phim nổi bật: mục banner đầu trang Phim của TV360 (composite/film/get-home), ảnh ngang 1280x720 đã in tên phim.
+     * Nửa ngày lấy lại một lần; lỗi thì giữ danh sách cũ, 15 phút sau thử lại. Bấm ô mở trang phim trong app
+     * (màn FILM_DETAIL theo mã phim, đúng như app tự mở khi bấm banner).
+     */
+    private static List<Shelf.Item> films() {
+        long now = System.currentTimeMillis();
+        if (filmsAt != 0 && now - filmsAt < FILM_EVERY) return films;
+        try {
+            JSONArray boxes = json(SITE + "composite/film/get-home").optJSONArray("data");
+            List<Shelf.Item> out = new ArrayList<>();
+            Set<String> seen = new HashSet<>();
+            for (int b = 0; boxes != null && b < boxes.length(); b++) {
+                JSONObject box = boxes.getJSONObject(b);
+                if (!"BANNER".equalsIgnoreCase(box.optString("type"))) continue;
+                JSONArray c = box.optJSONArray("content");
+                for (int i = 0; c != null && i < c.length(); i++) {
+                    JSONObject e = c.getJSONObject(i);
+                    String id = e.optString("itemId", "");
+                    String art = e.optString("coverImage", "");
+                    if (!"FILM".equalsIgnoreCase(e.optString("type")) || !id.matches("\\d+") || !art.startsWith("http") || !seen.add(id)) continue;
+                    Shelf.Item it = new Shelf.Item();
+                    it.pkg = PKG;
+                    it.title = "";   // ảnh đã in tên phim
+                    it.art = big(art);
+                    it.intent = "intent:#Intent;component=" + PKG + "/" + LIVE_SCREEN
+                            + ";S.SCREEN_TYPE=FILM_DETAIL;S.ITEM_ID=" + id + ";end";
+                    out.add(it);
+                }
+            }
+            if (out.isEmpty()) throw new java.io.IOException("khong co phim");
+            films = out;
+            filmsAt = now;
+        } catch (Exception e) {
+            android.util.Log.i(TAG, "phim loi " + e);
+            filmsAt = now - FILM_EVERY + 15 * 60_000L;
+        }
+        return films;
     }
 
     private static boolean set(List<Shelf.Item> out) {

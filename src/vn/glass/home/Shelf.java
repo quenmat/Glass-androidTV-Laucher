@@ -88,7 +88,7 @@ final class Shelf {
                     i.sub = o.optString("sub", null); i.art = o.optString("art", null);
                     i.intent = o.optString("intent", null);
                     i.progress = (float) o.optDouble("progress", 0); i.engaged = o.optLong("engaged", 0);
-                    if (i.pkg != null && i.art != null && seen.add(idOf(i))) all.add(i);
+                    if (i.pkg != null && i.art != null && !i.art.isEmpty() && seen.add(idOf(i))) all.add(i);
                 }
             }
         } catch (Exception ignored) {}
@@ -139,7 +139,7 @@ final class Shelf {
                 i.sub = o.optString("sub", null); i.art = o.optString("art", null);
                 i.intent = o.optString("intent", null); i.live = o.optBoolean("live", false);
                 i.startAt = o.optLong("startAt", 0); i.until = o.optLong("until", 0);
-                if (i.pkg != null && i.art != null) out.add(i);
+                if (i.pkg != null && i.art != null && i.art.startsWith("http")) out.add(i);   // ô cũ lưu khi trận chưa có banner (ảnh rỗng): bỏ
             }
         } catch (Exception ignored) {}
         return out;

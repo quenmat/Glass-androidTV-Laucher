@@ -83,8 +83,8 @@ public class MainActivity extends Activity {
     // hàng nội dung: 5 ô 16:9 (332x187), bề ngang tính theo dock (xem buildShelf). Hàng nằm TRÊN dock, cách mép trên khay
     // ROW_GAP: đủ chỗ cho ô phim đang chọn phóng to (lấn xuống ~23px) mà không chạm ô app bên dưới
     // SHELF_N: số ô vừa một màn (định cỡ ô); ROW_N: số ô thường của một hàng (dư SHELF_N thì hàng cuộn ngang theo ô
-    // đang chọn); ROW_MAX: số ô tối đa (FPT, TV360: đủ mọi trận của vòng)
-    private static final int SHELF_N = 5, ROW_N = 10, ROW_MAX = 12, THUMB_GAP = 30, ROW_GAP = 40, ROW_TOP = 614 - ROW_GAP - 187;
+    // đang chọn); ROW_MAX: số ô tối đa (TV360: đủ mọi trận C1 của lượt, 18 trận + vài chương trình); FPT_ROW: hàng FPT (đủ một vòng Ngoại hạng Anh)
+    private static final int SHELF_N = 5, ROW_N = 10, ROW_MAX = 24, FPT_ROW = 12, THUMB_GAP = 30, ROW_GAP = 40, ROW_TOP = 614 - ROW_GAP - 187;
     private final int[] thumbSize = new int[2];
     private static final float ROW_IDLE_ALPHA = 0.80f, THUMB_R = 12;   // hàng lúc đang ở dock: trong hơn để nền và dock nổi
 
@@ -1434,10 +1434,12 @@ public class MainActivity extends Activity {
             // ô thumb đang phát kênh: khỏi gọi mạng và khỏi vẽ lại ô giá (số chạy làm cả màn vẽ lại, hình xem trước khựng)
             if (thumbPrev == null && btcBusy.compareAndSet(false, true)) {
                 net.execute(() -> {
-                    Prices.Btc[] cs = Prices.crypto();
-                    btcBusy.set(false);
+                    Prices.Btc[] cs = null;
+                    try { cs = Prices.crypto(); } catch (Throwable e) { android.util.Log.i("GlassNet", "gia coin loi " + e); }
+                    finally { btcBusy.set(false); }   // lỗi bất ngờ cũng phải nhả cờ, không thì không bao giờ tải lại
+                    Prices.Btc[] got = cs;
                     ui.post(() -> {
-                        if (cs != null) for (int i = 0; i < cs.length; i++) if (cs[i] != null) showCoin(i, cs[i]);
+                        if (got != null) for (int i = 0; i < got.length; i++) if (got[i] != null) showCoin(i, got[i]);
                         markStale();
                     });
                 });
@@ -1450,8 +1452,10 @@ public class MainActivity extends Activity {
         @Override public void run() {
             if (goldBusy.compareAndSet(false, true)) {
                 net.execute(() -> {
-                    Prices.Gold g = Prices.gold();
-                    goldBusy.set(false);
+                    Prices.Gold g0 = null;
+                    try { g0 = Prices.gold(); } catch (Throwable e) { android.util.Log.i("GlassNet", "gia vang loi " + e); }
+                    finally { goldBusy.set(false); }
+                    Prices.Gold g = g0;
                     ui.post(() -> { if (g != null) showGold(g); markStale(); });
                 });
             }
@@ -1731,10 +1735,12 @@ public class MainActivity extends Activity {
     private static final float THUMB_DIM = 0.68f;   // ô phim không được chọn khi đang ở hàng nội dung (trong quá thì ảnh nền xuyên qua, nhìn loá)
 
     // ---------- xem trước kênh ngay trên ô thumb (hàng của ô Truyền hình) ----------
-    // Đứng yên trên ô kênh 0,3 giây (ô đã phóng to xong) thì một khung đúng cỡ ô đã phóng đè lên: dưới cùng là SurfaceView
+    // Đứng yên trên ô kênh ~0,5 giây (ô đã phóng to, hàng đã dạt và cuộn xong) thì một khung đúng cỡ ô đã phóng đè lên: dưới cùng là SurfaceView
     // phát kênh, trên là ảnh kênh (trông y như ô) mờ dần khi có khung hình đầu, tiếng to dần (TvPreview). Khung nằm thẳng
     // trong root, không nằm trong ô (ô có scale, SurfaceView không phóng/thu theo), rời ô là gỡ hẳn khung, Surface tự huỷ.
-    private static final long THUMB_DWELL_MS = 300;
+    // chờ ô phóng to, các ô bên cạnh dạt ra và hàng cuộn xong hẳn (440 ms) rồi mới đặt khung: khung nằm thẳng trong root,
+    // không chạy theo ô; đặt sớm thì ô còn đang trượt mà khung đứng yên, khoảng cách giữa các ô nhìn lộn xộn
+    private static final long THUMB_DWELL_MS = 480;
     private FrameLayout thumbPrevBox;
     private ImageView thumbPrevArt;
     private TvPreview thumbPrev;
@@ -1758,7 +1764,9 @@ public class MainActivity extends Activity {
         FrameLayout t = thumbs.get(i);
         int w = px(thumbSize[0]), h = px(thumbSize[1]);
         int sw = w + px(THUMB_GROW_W), sh = h + px(THUMB_GROW_H);
-        int x = Math.round(shelfRow.getLeft() + shelfRow.getTranslationX()) + t.getLeft() - (sw - w) / 2;
+        // vị trí đích của hàng (đã cuộn xong) và của ô chọn (không dạt), không lấy vị trí giữa chừng của hiệu ứng
+        float rowX = -rowFirst * px(thumbSize[0] + THUMB_GAP);
+        int x = Math.round(shelfRow.getLeft() + rowX) + t.getLeft() - (sw - w) / 2;
         int y = Math.round(shelfRow.getTop() + dockLift) + t.getTop() - (sh - h) / 2;
         thumbPrevIdx = i;
         FrameLayout box = new FrameLayout(this);
@@ -2070,7 +2078,7 @@ public class MainActivity extends Activity {
         List<Shelf.Item> own = itemsOf(a);
         List<Shelf.Item> items = new ArrayList<>();
         // FPT Play: đủ mọi trận của vòng (hàng cuộn); app khác tối đa ROW_N ô
-        int cap = FptFeed.PKG.equals(a.pkg) || Tv360Feed.PKG.equals(a.pkg) ? ROW_MAX : ROW_N;
+        int cap = Tv360Feed.PKG.equals(a.pkg) ? ROW_MAX : FptFeed.PKG.equals(a.pkg) ? FPT_ROW : ROW_N;
         for (Shelf.Item it : own) { if (items.size() < cap) items.add(it); }
         // hàng chỉ có nội dung của chính app đang chọn; app không có nội dung thì hàng để trống (không mượn app khác)
         boolean mixed = false;
@@ -2511,21 +2519,43 @@ public class MainActivity extends Activity {
     private static final long YT_EVERY = 10 * 60_000;
     private long ytLastAt;
     private final java.util.concurrent.atomic.AtomicBoolean ytBusy = new java.util.concurrent.atomic.AtomicBoolean();
+    private volatile Thread feedThread;   // luồng của lượt tải hàng đang chạy
     private final Runnable ytTick = new Runnable() {
         @Override public void run() {
             long wait = ytLastAt + (anyLive() ? LIVE_EVERY : YT_EVERY) - android.os.SystemClock.elapsedRealtime();
             if (ytLastAt != 0 && wait > 0) { ui.postDelayed(this, wait); return; }
             if (thumbPrev != null) { ui.postDelayed(this, 30_000); return; }
+            // lượt trước treo quá lâu (vd kẹt mạng lúc box ngủ dậy): ghi chỗ treo vào log rồi bỏ cờ, chạy lượt mới
+            if (ytBusy.get() && ytLastAt != 0 && android.os.SystemClock.elapsedRealtime() - ytLastAt > 4 * 60_000L) {
+                Thread h = feedThread;
+                if (h != null) {
+                    StringBuilder sb = new StringBuilder("luot tai hang treo, dang o:");
+                    for (StackTraceElement e : h.getStackTrace()) sb.append(" | ").append(e);
+                    android.util.Log.i("GlassNet", sb.toString());
+                    h.interrupt();
+                }
+                ytBusy.set(false);
+            }
             if (ytBusy.compareAndSet(false, true)) {
                 ytLastAt = android.os.SystemClock.elapsedRealtime();
                 String fav = favAbbr(), favName = favName();
-                net.execute(() -> {
-                    // hàng trận / trực tiếp trước (vài lượt gọi), xong là vẽ ngay; YouTube sau; lọc phim (nhiều trang) sau cùng
-                    if (FptFeed.refresh(fav, ROW_MAX) | Tv360Feed.refresh(getApplicationContext(), favName, ROW_MAX)) feedsChanged();
-                    if (YtFeed.refresh(getApplicationContext(), ROW_N)) feedsChanged();
-                    if (FptFeed.refreshFilms()) feedsChanged();
-                    ytBusy.set(false);
-                });
+                // luồng riêng cho mỗi lượt (không dùng chung hàng đợi mạng): lượt cũ có treo cũng không chặn lượt mới
+                Thread th = new Thread(() -> {
+                    android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
+                    // hàng trận / trực tiếp trước (vài lượt gọi), xong là vẽ ngay; YouTube sau; lọc phim (nhiều trang) sau cùng.
+                    // Mỗi phần bọc riêng: một phần lỗi bất ngờ (dữ liệu lạ) không chặn phần sau, và cờ luôn được nhả. Trước đây
+                    // lỗi giữa chừng làm cờ kẹt: không lượt nào chạy nữa, hàng TV360 / FPT trống tới khi box khởi động lại.
+                    try {
+                        boolean ch = false;
+                        try { ch |= FptFeed.refresh(fav, FPT_ROW); } catch (Throwable e) { android.util.Log.i("GlassNet", "hang FPT loi " + e); }
+                        try { ch |= Tv360Feed.refresh(getApplicationContext(), favName, ROW_MAX); } catch (Throwable e) { android.util.Log.i("GlassNet", "hang TV360 loi " + e); }
+                        if (ch) feedsChanged();
+                        try { if (YtFeed.refresh(getApplicationContext(), ROW_N)) feedsChanged(); } catch (Throwable e) { android.util.Log.i("GlassNet", "hang YouTube loi " + e); }
+                        try { if (FptFeed.refreshFilms()) feedsChanged(); } catch (Throwable e) { android.util.Log.i("GlassNet", "phim FPT loi " + e); }
+                    } finally { if (feedThread == Thread.currentThread()) { feedThread = null; ytBusy.set(false); } }
+                }, "glass-hang");
+                feedThread = th;
+                th.start();
             }
             // đang có trận / chương trình trực tiếp: xem lại dày hơn (trận xong, đổi trận) cho hàng khỏi lệch
             ui.postDelayed(this, anyLive() ? LIVE_EVERY : YT_EVERY);
@@ -2792,6 +2822,14 @@ public class MainActivity extends Activity {
             ui.post(eplTick);
         }
         if (Wallpapers.widget(this, "gold") && goldOkAt == 0) { ui.removeCallbacks(goldTick); ui.post(goldTick); }
+        // vừa bật tivi, lượt tải hàng chạy lúc Wi-Fi chưa nối lại: có mạng thì tải lại hàng TV360 / FPT / YouTube ngay
+        if (Tv360Feed.items().isEmpty() || FptFeed.items().isEmpty() || YtFeed.items().isEmpty()) {
+            ytLastAt = 0;
+            ui.removeCallbacks(ytTick);
+            ui.post(ytTick);
+        }
+        // ảnh banner tải hỏng lúc chưa có mạng thì ô để trống (không tự thử lại): vẽ lại hàng để tải lại ảnh
+        if (!inShelf && apps != null && focused < apps.size()) { rowKey = null; fillRow(apps.get(focused)); }
     }
 
     // ---------- nhắc đặt Glass Home làm màn hình chính ----------
@@ -2820,6 +2858,7 @@ public class MainActivity extends Activity {
 
     private void showHomePrompt() {
         if (!needsHomePrompt() || saverOn || !shown()) return;
+        hideRemind(true);
         int sw = getResources().getDisplayMetrics().widthPixels, sh = getResources().getDisplayMetrics().heightPixels;
         FrameLayout box = new FrameLayout(this);
         View shade = new View(this);
@@ -2925,6 +2964,7 @@ public class MainActivity extends Activity {
 
     private void openSettings() {
         if (settings != null) return;
+        hideRemind(true);   // thẻ bản tin không nằm chồng lên bảng
         tray.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         shelfRow.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         gear.setFocusable(false); clock.setFocusable(false);
@@ -3050,6 +3090,7 @@ public class MainActivity extends Activity {
     /** Bảng phủ cả màn hình: tv = bảng kênh truyền hình (nhóm theo group-title), không thì bảng Trò chơi + Ứng dụng. */
     private void openPanel(boolean tv) {
         if (allApps != null) return;
+        hideRemind(true);
         stopThumbPreview(false);   // một phiên phát mỗi lúc: bảng kênh có khung xem trước riêng
         allApps = new FrameLayout(this);
         allApps.setBackgroundColor(0xF0050507);
@@ -4451,7 +4492,12 @@ public class MainActivity extends Activity {
             return true;
         }
         armSaver();
-        if (remindCard != null && e.getAction() == KeyEvent.ACTION_DOWN) hideRemind(true);
+        // thẻ bản tin / thẻ nhắc: đi lại chọn app vẫn giữ thẻ; Back thu thẻ (chỉ thu, không làm gì khác);
+        // mở app, mở lịch / cài đặt, hết 45 giây thì tự thu như cũ
+        if (remindCard != null && (e.getKeyCode() == KeyEvent.KEYCODE_BACK || e.getKeyCode() == KeyEvent.KEYCODE_ESCAPE)) {
+            if (e.getAction() == KeyEvent.ACTION_DOWN) { hideRemind(true); swallowUp = true; }
+            return true;
+        }
         if (homePrompt != null) {
             // hộp nhắc đặt làm màn hình chính: Quay lại = Để sau; phím hướng chuyển giữa hai nút
             int kc = e.getKeyCode();

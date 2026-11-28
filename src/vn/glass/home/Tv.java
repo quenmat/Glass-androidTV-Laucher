@@ -13,10 +13,10 @@ import java.util.List;
 /**
  * Truyền hình qua IPTV: danh sách kênh là tệp kenh.m3u (kèm ảnh <tên>.png) trong Android/data/vn.glass.home/files/tv/,
  * do chủ máy tự đặt (địa chỉ kênh là luồng udp://@... của nhà mạng, chỉ xem được trong mạng nhà, không đưa lên repo).
- * Launcher hiện kênh; bấm kênh thì trình phát mở thẳng luồng: VLC nếu có (chủ máy chọn; phải để tăng tốc phần cứng
- * Đầy đủ thì chip của box mới tự khử xen kẽ), không thì Just Player (nhẹ, vào hình ~1 giây). Bấm Back là trình phát đóng,
- * về đúng chỗ đang đứng trên launcher. Cả hai phát ở 60Hz: luồng truyền hình không ghi tốc độ khung hình nên trình
- * phát không biết để chuyển 50Hz (chủ máy đã chọn chấp nhận).
+ * Launcher hiện kênh; bấm kênh udp:// thì mở trình phát của Glass Home (TvPlayer: trình phát IPTV của chip, khử xen kẽ
+ * phần cứng, màn hình 50Hz trong lúc xem). Kênh khác, hoặc TvPlayer không phát được, thì mở trình phát ngoài: VLC nếu
+ * có (phải để tăng tốc phần cứng Đầy đủ thì chip mới tự khử xen kẽ), không thì Just Player. Bấm Back là về đúng chỗ
+ * đang đứng trên launcher.
  */
 final class Tv {
     // trình phát theo thứ tự ưu tiên: gói + màn phát (gọi thẳng màn phát nên nhận cả địa chỉ udp://)
@@ -115,6 +115,21 @@ final class Tv {
 
     /** Trình phát mở thẳng luồng của kênh; trả về false nếu không mở được. */
     static boolean play(Context c, Channel ch, Bundle anim) {
+        if (ch == null || ch.url == null) return false;
+        // luồng udp:// của modem: trình phát của Glass Home (trình phát IPTV của chip, khử xen kẽ phần cứng, 50Hz)
+        if (ch.url.startsWith("udp://")) {
+            remember(c, ch.name);
+            try {
+                c.startActivity(new Intent(c, TvPlayer.class).putExtra(TvPlayer.EXTRA_NAME, ch.name)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), anim);
+                return true;
+            } catch (Exception ignored) {}
+        }
+        return playExternal(c, ch, anim);
+    }
+
+    /** Mở kênh bằng trình phát ngoài (VLC, Just Player). */
+    static boolean playExternal(Context c, Channel ch, Bundle anim) {
         if (ch == null || ch.url == null) return false;
         java.util.Set<String> installed = new java.util.HashSet<>();
         for (String[] p : PLAYERS) {

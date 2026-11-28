@@ -37,6 +37,54 @@ final class Morning {
 
     static boolean windy(Weather.Now w) { return w.wind >= 20 || w.gust >= 40; }
 
+    // ---------- ngưỡng mặc đồ: tab "Thời tiết" của sheet (cột Từ độ, Đến độ, Lời khuyên; ô trống là không giới hạn) ----------
+
+    private static final class Rule { int from = Integer.MIN_VALUE, to = Integer.MAX_VALUE; String[] text; }
+    private static volatile List<Rule> rules;
+    private static final java.util.regex.Pattern NUM = java.util.regex.Pattern.compile("-?\\d+");
+
+    /** Đọc bảng ngưỡng từ CSV; trả số mức đọc được (0 thì giữ bảng cũ). */
+    static int setRules(String csv) {
+        List<Rule> out = new ArrayList<>();
+        if (csv == null) return 0;
+        // chỉ nhận khi thấy đủ dòng tiêu đề "Từ độ, Đến độ, Lời khuyên": tab bị đổi tên thì Google trả tab đầu
+        // (tab ngày nhớ), không được đọc nhầm thành ngưỡng
+        int cf = -1, ct = -1, cx = -1;
+        boolean found = false;
+        for (String line : csv.split("\r?\n")) {
+            List<String> f = Days.cells(line);
+            if (!found) {
+                for (int i = 0; i < f.size(); i++) {
+                    String h = f.get(i).trim().toLowerCase(new java.util.Locale("vi"));
+                    if (h.startsWith("từ")) cf = i;
+                    else if (h.startsWith("đến")) ct = i;
+                    else if (h.startsWith("lời khuyên")) cx = i;
+                }
+                found = cf >= 0 && ct >= 0 && cx >= 0;
+                if (!found) { cf = ct = cx = -1; }
+                continue;
+            }
+            if (f.size() <= Math.max(cf, Math.max(ct, cx))) continue;
+            String a = f.get(cf).trim(), z = f.get(ct).trim(), t = f.get(cx).trim();
+            java.util.regex.Matcher ma = NUM.matcher(a), mz = NUM.matcher(z);
+            boolean ha = ma.find(), hz = mz.find();
+            if (t.isEmpty() || (!ha && !hz) || (!ha && !a.isEmpty()) || (!hz && !z.isEmpty())) continue;
+            Rule r = new Rule();
+            if (ha) r.from = Integer.parseInt(ma.group());
+            if (hz) r.to = Integer.parseInt(mz.group());
+            List<String> parts = new ArrayList<>();
+            for (String s : t.split("\\.\\s+|\\.$|\\n")) if (!s.trim().isEmpty()) parts.add(s.trim());
+            if (parts.isEmpty()) continue;
+            r.text = parts.toArray(new String[0]);
+            out.add(r);
+        }
+        if (!out.isEmpty()) rules = out;
+        return out.size();
+    }
+
+    /** Nạp bảng đã lưu lần trước (một lần mỗi tiến trình). */
+    static void ensure(android.content.Context c) { if (rules == null) setRules(Days.weatherCsv(c)); }
+
     static Brief build(Weather.Now w) {
         Brief b = new Brief();
         Calendar c = Calendar.getInstance();
@@ -55,7 +103,13 @@ final class Morning {
         // mặc gì khi đi xe máy (đang mưa / gió lớn: lạnh hơn 1 độ)
         int t = w.temp - (rain || wind ? 1 : 0);
         List<String> say = new ArrayList<>();
-        if (t >= 24) add(b, say, WARM, "Trời ấm áp, mặc mỏng cho mát", true);
+        Rule hit = null;
+        List<Rule> rs = rules;
+        if (rs != null) for (Rule r : rs) if (t >= r.from && t <= r.to) { hit = r; break; }
+        if (hit != null) {
+            int col = hit.to < 13 ? RED : WARM;   // từ rét đậm trở xuống: chữ đỏ
+            for (int k = 0; k < hit.text.length; k++) add(b, say, k == 0 ? col : WARM, hit.text[k], k == 0);
+        } else if (t >= 24) add(b, say, WARM, "Trời ấm áp, mặc mỏng cho mát", true);
         else if (t >= 20) add(b, say, WARM, "Đi xe máy nên đem theo áo khoác mỏng", true);
         else if (t >= 16) add(b, say, WARM, "Đi xe máy nên mặc áo khoác dày", true);
         else if (t >= 13) add(b, say, WARM, "Nên mặc áo phao cho ấm", true);

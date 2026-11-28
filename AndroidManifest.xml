@@ -37,6 +37,16 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen">
 
+        <!-- trình phát kênh IPTV toàn màn hình (task riêng: Back / Home là về launcher, không đọng lại) -->
+        <activity
+            android:name=".TvPlayer"
+            android:exported="false"
+            android:taskAffinity="vn.glass.home.tv"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|uiMode" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

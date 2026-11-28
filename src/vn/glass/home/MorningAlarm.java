@@ -27,6 +27,7 @@ public final class MorningAlarm extends BroadcastReceiver {
                     }
                     Thread.sleep(3000);
                 }
+                Days.refresh(app);   // kèm đọc lại sheet: ngưỡng mặc đồ mới sửa tối qua có ngay cho bản tin sáng
             } catch (Exception ignored) {
             } finally {
                 schedule(app);

@@ -48,6 +48,7 @@ final class Briefing {
 
     private Briefing(Context app) {
         this.app = app;
+        Morning.ensure(app);   // ngưỡng mặc đồ đã lưu từ tab "Thời tiết" của sheet
         // box vừa khởi động là một lần "bật tivi"; tiến trình bị dọn rồi mở lại trong cùng lần khởi động thì không
         long boot = (System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime()) / 60_000L;
         SharedPreferences p = prefs();

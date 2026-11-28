@@ -197,6 +197,7 @@ final class Days {
             p.edit().putString("ngay_csv", csv).putLong("ngay_at", System.currentTimeMillis()).apply();
             synchronized (Days.class) { mine = l; readAt = System.currentTimeMillis(); }
             android.util.Log.i("GlassDays", "sheet " + l.size() + " ngay");
+            readWeatherTab(c, u);
             return changed;
         } catch (Exception e) {
             android.util.Log.i("GlassDays", "sheet loi " + e);
@@ -204,6 +205,25 @@ final class Days {
             return false;
         }
     }
+
+    /** Tab "Thời tiết" cùng sheet: ngưỡng nhiệt độ và lời khuyên mặc đồ cho bản tin. Tìm tab theo tên, lỗi thì giữ bản cũ. */
+    private static void readWeatherTab(Context c, String u) {
+        Matcher m = SHEET_ID.matcher(u);
+        if (!m.find()) return;
+        try {
+            String csv = get("https://docs.google.com/spreadsheets/d/" + m.group(1)
+                    + "/gviz/tq?tqx=out:csv&headers=1&sheet=" + java.net.URLEncoder.encode("Thời tiết", "UTF-8").replace("+", "%20"));
+            if (csv.trim().startsWith("<")) throw new Exception("khong phai csv");
+            int n = Morning.setRules(csv);
+            if (n > 0) prefs(c).edit().putString("thoitiet_csv", csv).apply();
+            android.util.Log.i("GlassDays", "tab thoi tiet " + n + " muc");
+        } catch (Exception e) {
+            android.util.Log.i("GlassDays", "tab thoi tiet loi " + e);
+        }
+    }
+
+    /** Ngưỡng mặc đồ đã lưu từ lần đọc trước (dùng khi chưa đọc lại được sheet). */
+    static String weatherCsv(Context c) { return prefs(c).getString("thoitiet_csv", ""); }
 
     private static final Pattern SHEET_ID = Pattern.compile("/spreadsheets/d/([A-Za-z0-9_-]{20,})");
 
@@ -298,7 +318,7 @@ final class Days {
     }
 
     /** Tách một dòng CSV (có ô trong ngoặc kép). */
-    private static List<String> cells(String line) {
+    static List<String> cells(String line) {
         List<String> out = new ArrayList<>();
         StringBuilder b = new StringBuilder();
         boolean q = false;
